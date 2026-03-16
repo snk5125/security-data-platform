@@ -1,0 +1,30 @@
+graph TD
+    BOOT["bootstrap/<br/>5 resources + 1 data source<br/>Local state"]
+
+    SAB["module.security_account_baseline<br/>9 resources + 6 data sources<br/>Hub role, managed storage"]
+
+    WAB["module.workload_a_baseline<br/>10 resources + 2 data sources<br/>VPC, EC2"]
+
+    WBB["module.workload_b_baseline<br/>10 resources + 2 data sources<br/>VPC, EC2"]
+
+    WADS["module.workload_a_data_sources<br/>18 resources + 4 data sources<br/>CloudTrail, Flow, GuardDuty, Config"]
+
+    WBDS["module.workload_b_data_sources<br/>18 resources + 4 data sources<br/>CloudTrail, Flow, GuardDuty, Config"]
+
+    CI["module.cloud_integration<br/>7 resources<br/>Storage creds, external locations"]
+
+    UC["module.unity_catalog<br/>8 resources<br/>Catalog, schemas, grants"]
+
+    WC["module.workspace_config<br/>1 resource + 3 data sources<br/>Cluster policy"]
+
+    BI["module.bronze_ingestion<br/>9 resources<br/>Notebooks, jobs"]
+
+    BOOT --> SAB
+    SAB --> WAB & WBB
+    WAB --> WADS
+    WBB --> WBDS
+    SAB & WADS & WBDS --> CI
+    CI -->|"Phase 5.5: update external IDs"| SAB
+    CI --> UC
+    UC --> WC
+    WC --> BI

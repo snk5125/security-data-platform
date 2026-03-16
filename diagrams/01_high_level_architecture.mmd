@@ -1,0 +1,162 @@
+graph TD
+    classDef awsBox fill:#FF9900,color:#fff,stroke:#232F3E,stroke-width:2px
+    classDef dbxBox fill:#FF3621,color:#fff,stroke:#8B0000,stroke-width:2px
+    classDef s3Box fill:#3F8624,color:#fff,stroke:#2E6B1A,stroke-width:2px
+    classDef iamBox fill:#DD344C,color:#fff,stroke:#8B0000,stroke-width:2px
+    classDef ec2Box fill:#ED7100,color:#fff,stroke:#9B4B00,stroke-width:2px
+    classDef kmsBox fill:#DD344C,color:#fff,stroke:#8B0000,stroke-width:2px
+    classDef dataBox fill:#8C4FFF,color:#fff,stroke:#5A2D9E,stroke-width:2px
+
+    %% ═══════════════════════════════════════════════════════
+    %% DATABRICKS LAYER
+    %% ═══════════════════════════════════════════════════════
+    subgraph DBX ["DATABRICKS FREE EDITION — <WORKSPACE>.cloud.databricks.com"]
+        direction LR
+
+        subgraph UC ["Unity Catalog"]
+            direction TB
+            CAT["security_poc catalog"]
+            SCHEMAS["bronze | silver | gold"]
+            CAT --- SCHEMAS
+        end
+
+        subgraph COMPUTE ["Compute"]
+            DW["Serverless Starter Warehouse"]
+        end
+
+        subgraph JOBS ["Bronze Ingestion (4 Jobs, PAUSED)"]
+            direction LR
+            J1["CloudTrail<br/>15 min"]
+            J2["VPC Flow<br/>10 min"]
+            J3["GuardDuty<br/>6 hr"]
+            J4["Config<br/>24 hr"]
+        end
+
+        subgraph CREDS ["Storage Credentials → External Locations"]
+            direction LR
+            HC["hub-credential → workload-a-logs, workload-b-logs"]
+            MC["managed-credential → managed-storage"]
+        end
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% SECURITY ACCOUNT
+    %% ═══════════════════════════════════════════════════════
+    subgraph SEC ["AWS SECURITY ACCOUNT — <SECURITY_ACCOUNT_ID>"]
+        direction LR
+
+        subgraph IAM_SEC ["IAM Roles"]
+            direction TB
+            HUB["lakehouse-hub-role<br/>AssumeRole → workload read-only roles<br/>S3 read + KMS decrypt"]
+            MSR["lakehouse-managed-storage-role<br/>S3 read/write to managed bucket"]
+        end
+
+        subgraph S3_SEC ["S3 Buckets"]
+            direction TB
+            MSB["security-lakehouse-managed-<SECURITY_ACCOUNT_ID><br/>Delta table storage (managed by Databricks)"]
+            STB["security-lakehouse-tfstate-<SECURITY_ACCOUNT_ID><br/>Terraform remote state"]
+        end
+
+        DDB["DynamoDB: security-lakehouse-tflock"]
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% WORKLOAD A
+    %% ═══════════════════════════════════════════════════════
+    subgraph WKA ["AWS WORKLOAD ACCOUNT A — <WORKLOAD_A_ACCOUNT_ID>"]
+        direction LR
+
+        subgraph NET_A ["VPC 10.0.0.0/16 — Subnet 10.0.1.0/24"]
+            direction LR
+            EC2AL["Linux t2.micro<br/><PUBLIC_IP>"]
+            EC2AW["Windows t2.micro<br/><PUBLIC_IP>"]
+            SGA["SG: 0.0.0.0/0<br/>:22, :3389 inbound"]
+        end
+
+        subgraph DATA_A ["Data Sources"]
+            direction LR
+            CTA["CloudTrail"]
+            FLA["VPC Flow Logs"]
+            GDA["GuardDuty"]
+            CFA["AWS Config"]
+        end
+
+        subgraph STORE_A ["Storage & IAM"]
+            direction TB
+            S3A["S3: lakehouse-workload-a-security-logs-<WORKLOAD_A_ACCOUNT_ID>"]
+            KMSA["KMS: <KMS_KEY_PREFIX>... (GuardDuty)"]
+            ROA["lakehouse-workload-a-read-only-role"]
+        end
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% WORKLOAD B
+    %% ═══════════════════════════════════════════════════════
+    subgraph WKB ["AWS WORKLOAD ACCOUNT B — <WORKLOAD_B_ACCOUNT_ID>"]
+        direction LR
+
+        subgraph NET_B ["VPC 10.1.0.0/16 — Subnet 10.1.1.0/24"]
+            direction LR
+            EC2BL["Linux t2.micro<br/><PUBLIC_IP>"]
+            EC2BW["Windows t2.micro<br/><PUBLIC_IP>"]
+            SGB["SG: 0.0.0.0/0<br/>:22, :3389 inbound"]
+        end
+
+        subgraph DATA_B ["Data Sources"]
+            direction LR
+            CTB["CloudTrail"]
+            FLB["VPC Flow Logs"]
+            GDB["GuardDuty"]
+            CFB["AWS Config"]
+        end
+
+        subgraph STORE_B ["Storage & IAM"]
+            direction TB
+            S3B["S3: lakehouse-workload-b-security-logs-<WORKLOAD_B_ACCOUNT_ID>"]
+            KMSB["KMS: <KMS_KEY_PREFIX>... (GuardDuty)"]
+            ROB["lakehouse-workload-b-read-only-role"]
+        end
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: Databricks → Security Account (IAM chain)
+    %% ═══════════════════════════════════════════════════════
+    HC -.->|"sts:AssumeRole<br/>(ExternalID: ede6...)"| HUB
+    MC -.->|"sts:AssumeRole<br/>(ExternalID: ede6...)"| MSR
+    MSR -.->|"S3 read/write"| MSB
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: Security Account → Workload Accounts (chain-assume)
+    %% ═══════════════════════════════════════════════════════
+    HUB -.->|"sts:AssumeRole"| ROA
+    HUB -.->|"sts:AssumeRole"| ROB
+    ROA -.->|"S3 read"| S3A
+    ROB -.->|"S3 read"| S3B
+    HUB -.->|"kms:Decrypt"| KMSA
+    HUB -.->|"kms:Decrypt"| KMSB
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: EC2 → Data Sources (telemetry generation)
+    %% ═══════════════════════════════════════════════════════
+    EC2AL -.-> DATA_A
+    EC2AW -.-> DATA_A
+    EC2BL -.-> DATA_B
+    EC2BW -.-> DATA_B
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: Data Sources → S3 (log delivery)
+    %% ═══════════════════════════════════════════════════════
+    CTA -->|"JSON.gz"| S3A
+    FLA -->|"text.gz"| S3A
+    GDA -->|"JSONL.gz<br/>(KMS encrypted)"| S3A
+    CFA -->|"JSON.gz"| S3A
+
+    CTB -->|"JSON.gz"| S3B
+    FLB -->|"text.gz"| S3B
+    GDB -->|"JSONL.gz<br/>(KMS encrypted)"| S3B
+    CFB -->|"JSON.gz"| S3B
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: Jobs read from S3 via external locations
+    %% ═══════════════════════════════════════════════════════
+    JOBS -->|"Auto Loader<br/>cloudFiles"| CREDS

@@ -1,0 +1,33 @@
+graph LR
+    subgraph "Workload A (<WORKLOAD_A_ACCOUNT_ID>)"
+        S3A["S3 Bucket<br/>lakehouse-workload-a-security-logs"]
+    end
+
+    subgraph "Workload B (<WORKLOAD_B_ACCOUNT_ID>)"
+        S3B["S3 Bucket<br/>lakehouse-workload-b-security-logs"]
+    end
+
+    subgraph "Databricks Auto Loader"
+        AL["cloudFiles reader<br/>trigger(availableNow=True)<br/>directory listing mode"]
+    end
+
+    subgraph "Bronze Delta Tables"
+        CT["cloudtrail_raw<br/>248 rows"]
+        VF["vpc_flow_raw<br/>68,725 rows"]
+        GD["guardduty_raw<br/>12 rows"]
+        CF["config_raw<br/>73 rows"]
+    end
+
+    subgraph "S3 Paths"
+        P1["cloudtrail/AWSLogs/ - JSON.gz"]
+        P2["vpc-flow-logs/AWSLogs/ - text.gz"]
+        P3["AWSLogs/.../GuardDuty/ - JSONL.gz"]
+        P4["config/AWSLogs/ - JSON.gz"]
+    end
+
+    S3A --> P1 & P2 & P3 & P4
+    S3B --> P1 & P2 & P3 & P4
+    P1 --> AL --> CT
+    P2 --> AL --> VF
+    P3 --> AL --> GD
+    P4 --> AL --> CF

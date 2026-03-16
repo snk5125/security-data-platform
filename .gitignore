@@ -1,0 +1,76 @@
+# =============================================================================
+# Terraform
+# =============================================================================
+
+# State files — contain resource metadata, ARNs, and account identifiers.
+# State is stored remotely in S3; local copies must not be committed.
+*.tfstate
+*.tfstate.*
+
+# Provider plugins and module cache — large, platform-specific, regenerated
+# by `terraform init`.
+.terraform/
+.terraform.d/
+
+# Variable values — contains real account IDs, workspace URLs, and external
+# IDs. Use terraform.tfvars.example as a template.
+*.tfvars
+!*.tfvars.example
+
+# Backend configuration — contains account-specific S3 bucket name.
+# Use backend.tf.example as a template.
+environments/poc/backend.tf
+
+# Override files (used for local dev overrides, not committed)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Crash logs
+crash.log
+crash.*.log
+
+# =============================================================================
+# Credentials and local configuration
+# =============================================================================
+
+# Claude Code local settings — may contain tokens in command history
+.claude/
+
+# Environment files
+.env
+.env.*
+
+# Key material
+*.pem
+*.key
+
+# =============================================================================
+# OS and editor artifacts
+# =============================================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# Backup and temp files (from sed operations in onboarding script)
+# =============================================================================
+
+*.bak
+*.tmp
+
+# =============================================================================
+# Generated diagram artifacts (regenerable from .mmd sources)
+# =============================================================================
+
+diagrams/*.png
+diagrams/*.svg
