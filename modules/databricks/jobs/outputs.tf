@@ -27,9 +27,10 @@ output "config_job_id" {
 output "notebook_paths" {
   description = "Map of data source to notebook path in the workspace"
   value = {
-    cloudtrail = databricks_notebook.cloudtrail.path
-    vpc_flow   = databricks_notebook.vpc_flow.path
-    guardduty  = databricks_notebook.guardduty.path
-    config     = databricks_notebook.config.path
+    ocsf_common = databricks_notebook.ocsf_common.path
+    cloudtrail  = databricks_notebook.cloudtrail.path
+    vpc_flow    = databricks_notebook.vpc_flow.path
+    guardduty   = databricks_notebook.guardduty.path
+    config      = databricks_notebook.config.path
   }
 }

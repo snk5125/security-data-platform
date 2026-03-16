@@ -8,7 +8,7 @@ Generated from Terraform state (111 entries: 90 resources + 21 data sources)
 graph TB
     subgraph "Databricks (Free Edition)"
         direction TB
-        DW["Serverless Starter Warehouse<br/><WAREHOUSE_ID>"]
+        DW["Serverless Starter Warehouse<br/>0a3fea1c53bea9c6"]
 
         subgraph "Unity Catalog"
             CAT["Catalog: security_poc"]

@@ -9,7 +9,7 @@
 # The jobs use serverless compute (environment_key) since the free trial
 # workspace is Free Edition and does not support classic clusters.
 #
-# Resources created: 8 (4 notebooks + 4 jobs)
+# Resources created: 9 (5 notebooks + 4 jobs)
 #
 # Prerequisites:
 #   - Phase 6: catalog and bronze schema exist
@@ -45,6 +45,16 @@ locals {
 
 resource "databricks_directory" "bronze" {
   path = var.workspace_notebook_path
+}
+
+# Shared OCSF helper notebook — defines constants, struct builders, and mapping
+# functions used by all OCSF-formatted bronze notebooks via %run ./00_ocsf_common.
+# Must be uploaded before any job that depends on it executes.
+resource "databricks_notebook" "ocsf_common" {
+  depends_on = [databricks_directory.bronze]
+  path     = "${var.workspace_notebook_path}/00_ocsf_common"
+  language = "PYTHON"
+  source   = "${var.notebook_source_dir}/00_ocsf_common.py"
 }
 
 resource "databricks_notebook" "cloudtrail" {
@@ -87,7 +97,10 @@ resource "databricks_notebook" "config" {
 # until explicitly unpaused after validation.
 
 resource "databricks_job" "cloudtrail" {
-  name = "bronze-cloudtrail-ingest"
+  # Depends on the OCSF common notebook because the CloudTrail notebook uses
+  # %run ./00_ocsf_common to import shared OCSF helpers.
+  depends_on = [databricks_notebook.ocsf_common]
+  name       = "bronze-cloudtrail-ingest"
 
   task {
     task_key = "ingest"
@@ -123,7 +136,8 @@ resource "databricks_job" "cloudtrail" {
 }
 
 resource "databricks_job" "vpc_flow" {
-  name = "bronze-vpc-flow-ingest"
+  depends_on = [databricks_notebook.ocsf_common]
+  name       = "bronze-vpc-flow-ingest"
 
   task {
     task_key = "ingest"
@@ -158,7 +172,8 @@ resource "databricks_job" "vpc_flow" {
 }
 
 resource "databricks_job" "guardduty" {
-  name = "bronze-guardduty-ingest"
+  depends_on = [databricks_notebook.ocsf_common]
+  name       = "bronze-guardduty-ingest"
 
   task {
     task_key = "ingest"
