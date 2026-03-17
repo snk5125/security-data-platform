@@ -1,6 +1,6 @@
 # Architecture Diagram — Security Data Lakehouse
 
-Generated from Terraform state (111 entries: 90 resources + 21 data sources)
+Generated from Terraform state (113 entries: 92 resources + 21 data sources)
 
 ## High-Level Architecture
 
@@ -20,18 +20,27 @@ graph TB
             CAT --> SG
         end
 
-        subgraph "Bronze Ingestion Jobs"
-            J1["CloudTrail Job<br/>15min trigger, PAUSED"]
-            J2["VPC Flow Job<br/>10min trigger, PAUSED"]
-            J3["GuardDuty Job<br/>6hr trigger, PAUSED"]
-            J4["Config Job<br/>24hr trigger, PAUSED"]
+        subgraph "Scheduled Jobs (4 Jobs, PAUSED)"
+            J1["CloudTrail Job<br/>15min trigger"]
+            J2["VPC Flow Job<br/>10min trigger"]
+            J3["GuardDuty Job<br/>6hr trigger"]
+            J4["Config Pipeline<br/>24hr trigger<br/>3 tasks: bronze → silver CDC → gold EC2"]
         end
 
-        subgraph "Notebooks"
-            N1["01_bronze_cloudtrail.py"]
-            N2["02_bronze_vpc_flow.py"]
-            N3["03_bronze_guardduty.py"]
-            N4["04_bronze_config.py"]
+        subgraph "Notebooks (7)"
+            subgraph "Bronze (5)"
+                N0["00_ocsf_common.py"]
+                N1["01_bronze_cloudtrail.py"]
+                N2["02_bronze_vpc_flow.py"]
+                N3["03_bronze_guardduty.py"]
+                N4["04_bronze_config.py"]
+            end
+            subgraph "Silver (1)"
+                N5["01_silver_config_cdc.py"]
+            end
+            subgraph "Gold (1)"
+                N6["01_gold_ec2_inventory.py"]
+            end
         end
 
         subgraph "Storage Credentials"
@@ -49,7 +58,10 @@ graph TB
         J2 --> N2
         J3 --> N3
         J4 --> N4
+        J4 --> N5
+        J4 --> N6
         N1 & N2 & N3 & N4 --> DW
+        N5 & N6 --> DW
         HC --> EL1 & EL2
         MC --> EL3
     end
@@ -180,7 +192,7 @@ graph LR
     HUB -->|"kms:Decrypt"| KMSB
 ```
 
-## Data Flow: S3 to Bronze Delta Tables
+## Data Flow: S3 → Bronze → Silver → Gold
 
 ```mermaid
 graph LR
@@ -197,10 +209,18 @@ graph LR
     end
 
     subgraph "Bronze Delta Tables"
-        CT["cloudtrail_raw<br/>248 rows"]
-        VF["vpc_flow_raw<br/>68,725 rows"]
-        GD["guardduty_raw<br/>12 rows"]
-        CF["config_raw<br/>73 rows"]
+        CT["cloudtrail_raw"]
+        VF["vpc_flow_raw"]
+        GD["guardduty_raw"]
+        CF["config_raw"]
+    end
+
+    subgraph "Silver Delta Tables"
+        CDC["config_cdc<br/>Normalized CDC rows<br/>per resource type"]
+    end
+
+    subgraph "Gold Delta Tables"
+        EC2["ec2_inventory<br/>Current-state per instance<br/>ENIs, volumes, SGs joined"]
     end
 
     subgraph "S3 Paths"
@@ -216,6 +236,9 @@ graph LR
     P2 --> AL --> VF
     P3 --> AL --> GD
     P4 --> AL --> CF
+
+    CF -->|"CDF / incremental"| CDC
+    CDC -->|"window + MERGE"| EC2
 ```
 
 ## Terraform Module Dependency Graph
@@ -240,7 +263,7 @@ graph TD
 
     WC["module.workspace_config<br/>1 resource + 3 data sources<br/>Cluster policy"]
 
-    BI["module.bronze_ingestion<br/>9 resources<br/>Notebooks, jobs"]
+    BI["module.bronze_ingestion<br/>14 resources<br/>7 notebooks, 3 directories, 4 jobs<br/>Bronze + Silver CDC + Gold EC2"]
 
     BOOT --> SAB
     SAB --> WAB & WBB
@@ -266,5 +289,5 @@ graph TD
 | `cloud_integration` | 7 | 0 | 7 |
 | `unity_catalog` | 8 | 0 | 8 |
 | `workspace_config` | 1 | 3 | 4 |
-| `bronze_ingestion` | 9 | 0 | 9 |
-| **Total (`environments/poc/`)** | **90** | **21** | **111** |
+| `bronze_ingestion` | 14 | 0 | 14 |
+| **Total (`environments/poc/`)** | **95** | **21** | **116** |

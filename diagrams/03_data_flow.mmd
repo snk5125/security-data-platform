@@ -12,10 +12,18 @@ graph LR
     end
 
     subgraph "Bronze Delta Tables"
-        CT["cloudtrail_raw<br/>248 rows"]
-        VF["vpc_flow_raw<br/>68,725 rows"]
-        GD["guardduty_raw<br/>12 rows"]
-        CF["config_raw<br/>73 rows"]
+        CT["cloudtrail_raw"]
+        VF["vpc_flow_raw"]
+        GD["guardduty_raw"]
+        CF["config_raw"]
+    end
+
+    subgraph "Silver Delta Tables"
+        CDC["config_cdc<br/>Normalized CDC rows<br/>per resource type"]
+    end
+
+    subgraph "Gold Delta Tables"
+        EC2["ec2_inventory<br/>Current-state per instance<br/>ENIs, volumes, SGs joined"]
     end
 
     subgraph "S3 Paths"
@@ -31,3 +39,6 @@ graph LR
     P2 --> AL --> VF
     P3 --> AL --> GD
     P4 --> AL --> CF
+
+    CF -->|"CDF / incremental"| CDC
+    CDC -->|"window + MERGE"| EC2

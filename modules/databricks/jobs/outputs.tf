@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# Outputs — Bronze Ingestion Jobs Module
+# Outputs — Ingestion Jobs Module (Bronze, Silver, Gold)
 # -----------------------------------------------------------------------------
 # Exposes job and notebook identifiers for validation and downstream use.
 # -----------------------------------------------------------------------------
@@ -27,10 +27,12 @@ output "config_job_id" {
 output "notebook_paths" {
   description = "Map of data source to notebook path in the workspace"
   value = {
-    ocsf_common = databricks_notebook.ocsf_common.path
-    cloudtrail  = databricks_notebook.cloudtrail.path
-    vpc_flow    = databricks_notebook.vpc_flow.path
-    guardduty   = databricks_notebook.guardduty.path
-    config      = databricks_notebook.config.path
+    ocsf_common   = databricks_notebook.ocsf_common.path
+    cloudtrail    = databricks_notebook.cloudtrail.path
+    vpc_flow      = databricks_notebook.vpc_flow.path
+    guardduty     = databricks_notebook.guardduty.path
+    config        = databricks_notebook.config.path
+    config_cdc    = databricks_notebook.config_cdc.path
+    ec2_inventory = databricks_notebook.ec2_inventory.path
   }
 }

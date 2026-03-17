@@ -453,7 +453,7 @@ resource "aws_guardduty_detector" "main" {
 }
 
 resource "aws_guardduty_publishing_destination" "s3" {
-  detector_id     = aws_guardduty_detector.main.id
+  detector_id = aws_guardduty_detector.main.id
   # GuardDuty requires the destination_arn to be the bucket ARN itself — it
   # creates its own prefix structure (e.g., /guardduty/...) automatically.
   destination_arn = aws_s3_bucket.security_logs.arn

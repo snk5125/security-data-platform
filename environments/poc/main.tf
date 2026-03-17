@@ -142,8 +142,8 @@ module "workload_b_data_sources" {
 module "cloud_integration" {
   source = "../../modules/databricks/cloud-integration"
 
-  hub_role_arn             = module.security_account_baseline.hub_role_arn
-  managed_storage_role_arn = module.security_account_baseline.managed_storage_role_arn
+  hub_role_arn                = module.security_account_baseline.hub_role_arn
+  managed_storage_role_arn    = module.security_account_baseline.managed_storage_role_arn
   managed_storage_bucket_name = module.security_account_baseline.managed_storage_bucket_name
 
   workload_a_security_logs_bucket_name = module.workload_a_data_sources.security_logs_bucket_name

@@ -24,12 +24,30 @@ graph TD
             DW["Serverless Starter Warehouse"]
         end
 
-        subgraph JOBS ["Bronze Ingestion (4 Jobs, PAUSED)"]
-            direction LR
-            J1["CloudTrail<br/>15 min"]
-            J2["VPC Flow<br/>10 min"]
-            J3["GuardDuty<br/>6 hr"]
-            J4["Config<br/>24 hr"]
+        subgraph JOBS ["Scheduled Jobs (4 Jobs, PAUSED)"]
+            direction TB
+            J1["CloudTrail<br/>1 task · 15 min"]
+            J2["VPC Flow<br/>1 task · 10 min"]
+            J3["GuardDuty<br/>1 task · 6 hr"]
+            J4["Config Pipeline<br/>3 tasks · 24 hr<br/>bronze → silver CDC → gold EC2"]
+        end
+
+        subgraph NOTEBOOKS ["Notebooks (7)"]
+            direction TB
+            subgraph NB_BRONZE ["Bronze (5)"]
+                direction LR
+                NB0["00_ocsf_common"]
+                NB1["01_bronze_cloudtrail"]
+                NB2["02_bronze_vpc_flow"]
+                NB3["03_bronze_guardduty"]
+                NB4["04_bronze_config"]
+            end
+            subgraph NB_SILVER ["Silver (1)"]
+                NB5["01_silver_config_cdc"]
+            end
+            subgraph NB_GOLD ["Gold (1)"]
+                NB6["01_gold_ec2_inventory"]
+            end
         end
 
         subgraph CREDS ["Storage Credentials → External Locations"]

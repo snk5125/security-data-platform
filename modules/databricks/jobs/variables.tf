@@ -1,8 +1,8 @@
 # -----------------------------------------------------------------------------
-# Input Variables — Bronze Ingestion Jobs Module
+# Input Variables — Ingestion Jobs Module (Bronze, Silver, Gold)
 # -----------------------------------------------------------------------------
 # Parameterizes the notebook paths, S3 bucket names, and checkpoint location
-# for the four bronze layer Auto Loader ingestion jobs.
+# for the ingestion jobs across all medallion tiers.
 #
 # Prerequisites:
 #   - Phase 6 complete (catalog and schemas exist)
@@ -38,7 +38,31 @@ variable "notebook_source_dir" {
 }
 
 variable "workspace_notebook_path" {
-  description = "Workspace path prefix where notebooks are uploaded"
+  description = "Workspace path prefix where bronze notebooks are uploaded"
   type        = string
   default     = "/Shared/security-lakehouse/bronze"
+}
+
+variable "silver_notebook_source_dir" {
+  description = "Local path to the silver notebook source files (relative to the root module)"
+  type        = string
+  default     = "../../notebooks/silver"
+}
+
+variable "silver_workspace_notebook_path" {
+  description = "Workspace path prefix where silver notebooks are uploaded"
+  type        = string
+  default     = "/Shared/security-lakehouse/silver"
+}
+
+variable "gold_notebook_source_dir" {
+  description = "Local path to the gold notebook source files (relative to the root module)"
+  type        = string
+  default     = "../../notebooks/gold"
+}
+
+variable "gold_workspace_notebook_path" {
+  description = "Workspace path prefix where gold notebooks are uploaded"
+  type        = string
+  default     = "/Shared/security-lakehouse/gold"
 }

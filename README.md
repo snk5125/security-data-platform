@@ -6,10 +6,10 @@ Multi-account AWS security data lakehouse powered by Databricks and Terraform.
 
 This project deploys a complete security data lakehouse across multiple AWS accounts using Databricks Unity Catalog. It collects security telemetry (CloudTrail, VPC Flow Logs, GuardDuty, AWS Config) from workload accounts and centralizes it into a Databricks lakehouse for analysis.
 
-- **90 Terraform resources** across 9 deployment phases
+- **95 Terraform resources** across 9 deployment phases
 - **3 AWS accounts** — 1 security/management hub + 2 workload accounts (extensible)
 - **4 security data sources** per workload account
-- **Bronze layer ingestion** via Databricks Auto Loader with serverless compute
+- **Full medallion architecture** — Bronze (Auto Loader ingestion), Silver (Config CDC), Gold (EC2 inventory)
 - **Databricks Free Edition compatible** — runs entirely on the Starter Warehouse
 
 ## Architecture
@@ -34,12 +34,12 @@ graph TD
             DW["Serverless Starter Warehouse"]
         end
 
-        subgraph JOBS ["Bronze Ingestion (4 Jobs)"]
+        subgraph JOBS ["Scheduled Jobs (4 Jobs)"]
             direction LR
             J1["CloudTrail"]
             J2["VPC Flow"]
             J3["GuardDuty"]
-            J4["Config"]
+            J4["Config Pipeline<br/>bronze → silver → gold"]
         end
 
         subgraph CREDS ["Storage Credentials"]
@@ -115,8 +115,10 @@ Additional workload accounts can be onboarded using the included automation scri
 1. **EC2 instances** in workload accounts generate security telemetry
 2. **AWS services** (CloudTrail, VPC Flow Logs, GuardDuty, Config) write logs to per-account S3 buckets
 3. **Databricks hub role** in the security account chain-assumes into read-only roles in each workload account
-4. **Auto Loader jobs** read from workload S3 buckets via external locations and write to Bronze Delta tables
-5. **Unity Catalog** provides governance across bronze/silver/gold schemas
+4. **Auto Loader jobs** read from workload S3 buckets via external locations and write to **Bronze** Delta tables
+5. **Silver CDC** normalizes Config snapshots into per-resource change-tracking rows
+6. **Gold EC2 inventory** joins EC2 instances with related resources (ENIs, volumes, security groups) into a current-state table
+7. **Unity Catalog** provides governance across bronze/silver/gold schemas
 
 ## Prerequisites
 
@@ -186,7 +188,7 @@ For the initial deployment, a staged apply ensures dependencies are met at each 
 | 5.5 | Enable self-assume | Set `enable_self_assume = true` in tfvars, then `terraform apply` |
 | 6 | Unity Catalog (catalog, schemas) | `-target=module.unity_catalog` |
 | 7 | Workspace config (Starter Warehouse) | `-target=module.workspace_config` |
-| 8 | Bronze ingestion (jobs + notebooks) | `-target=module.bronze_ingestion` |
+| 8 | Ingestion pipeline (jobs + notebooks — bronze, silver, gold) | `-target=module.bronze_ingestion` |
 | 9 | Full apply | `terraform apply` (validates everything) |
 
 ### 4. Validate
@@ -231,11 +233,16 @@ security-data-lakehouse/
 │       └── jobs/                       #   Bronze ingestion jobs
 │
 ├── notebooks/
-│   └── bronze/                         #   Auto Loader notebooks (4 data sources)
-│       ├── 01_bronze_cloudtrail.py
-│       ├── 02_bronze_vpc_flow.py
-│       ├── 03_bronze_guardduty.py
-│       └── 04_bronze_config.py
+│   ├── bronze/                         #   Auto Loader notebooks (4 data sources)
+│   │   ├── 00_ocsf_common.py           #     Shared OCSF helper (imported via %run)
+│   │   ├── 01_bronze_cloudtrail.py
+│   │   ├── 02_bronze_vpc_flow.py
+│   │   ├── 03_bronze_guardduty.py
+│   │   └── 04_bronze_config.py
+│   ├── silver/                         #   Silver CDC notebooks
+│   │   └── 01_silver_config_cdc.py     #     Config → normalized CDC rows
+│   └── gold/                           #   Gold analytical notebooks
+│       └── 01_gold_ec2_inventory.py    #     EC2 current-state inventory
 │
 ├── diagrams/                           #   Architecture diagrams (Mermaid sources)
 │   ├── 01_high_level_architecture.mmd
