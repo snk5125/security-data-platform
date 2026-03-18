@@ -162,3 +162,30 @@ output "config_job_id" {
   description = "AWS Config bronze ingestion job ID"
   value       = module.bronze_ingestion.config_job_id
 }
+
+# ── Phase 9: SNS Alert Forwarding ────────────────────────────────────────────
+
+output "sns_alerts_topic_arn" {
+  description = "SNS topic ARN for gold.alerts forwarding — subscribe email/SQS/Lambda here"
+  value       = module.sns_alerts.topic_arn
+}
+
+output "sns_alerts_topic_name" {
+  description = "SNS topic name — for console navigation"
+  value       = module.sns_alerts.topic_name
+}
+
+output "sns_publisher_iam_user_arn" {
+  description = "IAM user ARN for the Databricks SNS publisher — for IAM audit and policy review"
+  value       = module.sns_alerts.publisher_iam_user_arn
+}
+
+output "threat_intel_pipeline_job_id" {
+  description = "Threat intel pipeline job ID (bronze → silver → gold → forward)"
+  value       = module.bronze_ingestion.threat_intel_pipeline_job_id
+}
+
+output "alerts_secret_scope_name" {
+  description = "Databricks Secret Scope name holding SNS credentials"
+  value       = module.bronze_ingestion.alerts_secret_scope_name
+}

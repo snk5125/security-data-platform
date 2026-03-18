@@ -66,3 +66,45 @@ variable "gold_workspace_notebook_path" {
   type        = string
   default     = "/Shared/security-lakehouse/gold"
 }
+
+variable "threat_intel_notebook_source_dir" {
+  description = "Local path to the threat intel notebook source files (relative to the root module)"
+  type        = string
+  default     = "../../notebooks/threat_intel"
+}
+
+variable "threat_intel_workspace_notebook_path" {
+  description = "Workspace path prefix where threat intel notebooks are uploaded"
+  type        = string
+  default     = "/Shared/security-lakehouse/threat_intel"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SNS Alert Forwarding
+# These variables are passed from the sns-alerts AWS module outputs via the
+# root module. The jobs module stores them in a Databricks Secret Scope so the
+# forwarding notebook can retrieve credentials at runtime without hardcoding
+# any values in the notebook source.
+# ─────────────────────────────────────────────────────────────────────────────
+
+variable "sns_topic_arn" {
+  description = "ARN of the SNS topic that receives forwarded gold.alerts messages"
+  type        = string
+}
+
+variable "sns_publisher_access_key_id" {
+  description = "IAM access key ID for the SNS publisher user — stored in Databricks Secrets"
+  type        = string
+}
+
+variable "sns_publisher_secret_access_key" {
+  description = "IAM access key secret for the SNS publisher user — stored in Databricks Secrets (sensitive)"
+  type        = string
+  sensitive   = true
+}
+
+variable "aws_region" {
+  description = "AWS region where the SNS topic lives — used by the boto3 SNS client in the forwarding notebook"
+  type        = string
+  default     = "us-east-1"
+}

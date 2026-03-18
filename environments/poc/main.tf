@@ -197,6 +197,30 @@ module "workspace_config" {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Phase 9: SNS Alert Forwarding Infrastructure
+# ═════════════════════════════════════════════════════════════════════════════
+# Creates the AWS-side resources needed to receive forwarded gold.alerts rows
+# from Databricks: an SNS topic, a least-privilege IAM publisher user, and
+# the access key that Databricks uses to authenticate sns:Publish calls.
+#
+# The access key credentials are passed directly into Phase 8's Databricks
+# jobs module, which stores them in the "security-lakehouse" Databricks Secret
+# Scope so the forwarding notebook can retrieve them at runtime.
+#
+# Dependencies:
+#   - Phase 2: security account provider configured (SNS + IAM in same account)
+#   - Phase 8 (implicitly): the jobs module consumes the outputs of this module
+
+module "sns_alerts" {
+  source = "../../modules/aws/sns-alerts"
+
+  # Default AWS provider targets the security account — SNS topic and IAM
+  # user live alongside the managed storage bucket and hub role.
+
+  tags = local.common_tags
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Phase 8: Bronze Layer Ingestion
 # ═════════════════════════════════════════════════════════════════════════════
 # Uploads Auto Loader notebooks and creates scheduled jobs for bronze layer
@@ -218,4 +242,12 @@ module "bronze_ingestion" {
   managed_storage_bucket_name          = module.security_account_baseline.managed_storage_bucket_name
   workload_a_security_logs_bucket_name = module.workload_a_data_sources.security_logs_bucket_name
   workload_b_security_logs_bucket_name = module.workload_b_data_sources.security_logs_bucket_name
+
+  # SNS forwarding credentials — sourced from the sns_alerts module output.
+  # These are stored in the Databricks "security-lakehouse" Secret Scope by the
+  # jobs module so the forwarding notebook can retrieve them at runtime.
+  sns_topic_arn                   = module.sns_alerts.topic_arn
+  sns_publisher_access_key_id     = module.sns_alerts.publisher_access_key_id
+  sns_publisher_secret_access_key = module.sns_alerts.publisher_secret_access_key
+  aws_region                      = var.aws_region
 }
