@@ -17,10 +17,6 @@
 *.tfvars
 !*.tfvars.example
 
-# Backend configuration — contains account-specific S3 bucket name.
-# Use backend.tf.example as a template.
-environments/poc/backend.tf
-
 # Override files (used for local dev overrides, not committed)
 override.tf
 override.tf.json
@@ -42,6 +38,10 @@ crash.*.log
 
 # Claude Code local settings — may contain tokens in command history
 .claude/
+
+# Superpowers skills (local Claude Code extensions)
+superpowers/
+docs/superpowers/
 
 # Environment files
 .env
