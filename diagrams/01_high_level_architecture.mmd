@@ -16,7 +16,7 @@ graph TD
         subgraph UC ["Unity Catalog"]
             direction TB
             CAT["security_poc catalog"]
-            SCHEMAS["bronze | silver | gold"]
+            SCHEMAS["bronze | silver | gold | security"]
             CAT --- SCHEMAS
         end
 
@@ -38,16 +38,16 @@ graph TD
             subgraph NB_BRONZE ["Bronze (5)"]
                 direction LR
                 NB0["00_ocsf_common"]
-                NB1["01_bronze_cloudtrail"]
-                NB2["02_bronze_vpc_flow"]
-                NB3["03_bronze_guardduty"]
-                NB4["04_bronze_config"]
+                NB1["01_cloudtrail"]
+                NB2["02_vpc_flow"]
+                NB3["03_guardduty"]
+                NB4["04_config"]
             end
             subgraph NB_TI ["Threat Intel (3)"]
                 direction LR
                 NB_TI0["00_threat_intel_common"]
-                NB_TI1["01_bronze_threat_intel_ingest"]
-                NB_TI2["02_silver_threat_intel_network"]
+                NB_TI1["01_bronze_ingest"]
+                NB_TI2["02_silver_network"]
             end
             subgraph NB_SILVER ["Silver (1)"]
                 NB5["01_silver_config_cdc"]
@@ -61,7 +61,7 @@ graph TD
 
         subgraph CREDS ["Storage Credentials → External Locations"]
             direction LR
-            HC["hub-credential → workload-a-logs, workload-b-logs"]
+            HC["hub-credential → security-logs-workload-a, security-logs-workload-b"]
             MC["managed-credential → managed-storage"]
         end
     end

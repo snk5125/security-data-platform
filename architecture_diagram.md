@@ -1,6 +1,6 @@
 # Architecture Diagram — Security Data Lakehouse
 
-Generated from Terraform state (113 entries: 92 resources + 21 data sources)
+Generated from Terraform configuration across 4 independent roots
 
 ## High-Level Architecture
 
@@ -15,9 +15,11 @@ graph TB
             SB["Schema: bronze"]
             SS["Schema: silver"]
             SG["Schema: gold"]
+            SSEC["Schema: security"]
             CAT --> SB
             CAT --> SS
             CAT --> SG
+            CAT --> SSEC
         end
 
         subgraph "Scheduled Jobs (5 Jobs, PAUSED)"
@@ -31,15 +33,15 @@ graph TB
         subgraph "Notebooks (12)"
             subgraph "Bronze (5)"
                 N0["00_ocsf_common.py"]
-                N1["01_bronze_cloudtrail.py"]
-                N2["02_bronze_vpc_flow.py"]
-                N3["03_bronze_guardduty.py"]
-                N4["04_bronze_config.py"]
+                N1["01_cloudtrail.py"]
+                N2["02_vpc_flow.py"]
+                N3["03_guardduty.py"]
+                N4["04_config.py"]
             end
             subgraph "Threat Intel (3)"
                 NTI0["00_threat_intel_common.py"]
-                NTI1["01_bronze_threat_intel_ingest.py"]
-                NTI2["02_silver_threat_intel_network.py"]
+                NTI1["01_bronze_ingest.py"]
+                NTI2["02_silver_network.py"]
             end
             subgraph "Silver (1)"
                 N5["01_silver_config_cdc.py"]
@@ -57,8 +59,8 @@ graph TB
         end
 
         subgraph "External Locations"
-            EL1["workload-a-security-logs"]
-            EL2["workload-b-security-logs"]
+            EL1["security-logs-workload-a"]
+            EL2["security-logs-workload-b"]
             EL3["managed-storage"]
         end
 
@@ -230,7 +232,7 @@ graph LR
 
     subgraph "Ingestion"
         AL["Auto Loader<br/>cloudFiles · availableNow<br/>directory listing mode"]
-        TI_FETCH["HTTP Fetch<br/>01_bronze_threat_intel_ingest<br/>daily · OCSF formatted"]
+        TI_FETCH["HTTP Fetch<br/>01_bronze_ingest<br/>daily · OCSF formatted"]
     end
 
     subgraph "Bronze Delta Tables"
@@ -279,53 +281,46 @@ graph LR
     ALERTS -->|"sns:Publish per new alert"| SNS
 ```
 
-## Terraform Module Dependency Graph
+## Terraform Root Dependency Graph
 
 ```mermaid
 graph TD
-    BOOT["bootstrap/<br/>5 resources + 1 data source<br/>Local state"]
+    BOOT["<b>bootstrap/</b><br/>(local state)<br/>S3 state bucket · DynamoDB lock table"]
 
-    SAB["module.security_account_baseline<br/>9 resources + 6 data sources<br/>Hub role, managed storage"]
+    FOUND["<b>foundations/aws-security/</b><br/>module.security_foundation<br/>Managed S3 bucket · SNS topic · IAM publisher"]
 
-    WAB["module.workload_a_baseline<br/>10 resources + 2 data sources<br/>VPC, EC2"]
+    WKA["<b>workloads/aws-workload-a/</b><br/>module.baseline + module.data_sources<br/>VPC · EC2 · CloudTrail · VPC Flow<br/>GuardDuty · Config · S3 · KMS · IAM"]
 
-    WBB["module.workload_b_baseline<br/>10 resources + 2 data sources<br/>VPC, EC2"]
+    WKB["<b>workloads/aws-workload-b/</b><br/>module.baseline + module.data_sources<br/>VPC · EC2 · CloudTrail · VPC Flow<br/>GuardDuty · Config · S3 · KMS · IAM"]
 
-    WADS["module.workload_a_data_sources<br/>18 resources + 4 data sources<br/>CloudTrail, Flow, GuardDuty, Config"]
+    ASM["<b>scripts/assemble-workloads.sh</b><br/>Collects workload_manifest outputs →<br/>hub/workloads.auto.tfvars.json"]
 
-    WBDS["module.workload_b_data_sources<br/>18 resources + 4 data sources<br/>CloudTrail, Flow, GuardDuty, Config"]
+    subgraph HUB ["hub/ (Databricks integration layer)"]
+        direction TB
+        IAM["iam.tf<br/>lakehouse-hub-role<br/>lakehouse-managed-storage-role"]
+        CI["module.cloud_integration<br/>Storage creds · external locations<br/>(for_each over workloads)"]
+        UC["module.unity_catalog<br/>Catalog · schemas · grants"]
+        WC["module.workspace_config<br/>Cluster policy"]
+        JOBS["module.jobs<br/>12 notebooks · 4 directories<br/>5 jobs · secret scope + secrets"]
+        CI --> IAM
+        CI --> UC
+        UC --> WC
+        WC --> JOBS
+    end
 
-    CI["module.cloud_integration<br/>7 resources<br/>Storage creds, external locations"]
-
-    UC["module.unity_catalog<br/>8 resources<br/>Catalog, schemas, grants"]
-
-    WC["module.workspace_config<br/>1 resource + 3 data sources<br/>Cluster policy"]
-
-    BI["module.bronze_ingestion<br/>21 resources<br/>12 notebooks, 3 directories, 5 jobs<br/>Bronze + Silver CDC + Gold EC2<br/>+ Threat Intel + Alerts + SNS"]
-
-    BOOT --> SAB
-    SAB --> WAB & WBB
-    WAB --> WADS
-    WBB --> WBDS
-    SAB & WADS & WBDS --> CI
-    CI -->|"Phase 5.5: update external IDs"| SAB
-    CI --> UC
-    UC --> WC
-    WC --> BI
+    BOOT -->|"S3 backend"| FOUND
+    FOUND -->|"managed S3 exists"| WKA & WKB
+    WKA & WKB -->|"terraform output"| ASM
+    ASM -->|"workloads.auto.tfvars.json"| CI
 ```
 
-## Resource Count by Module
+## Resource Count by Root
 
-| Module | Resources | Data Sources | Total State Entries |
-|--------|-----------|-------------|---------------------|
-| `bootstrap/` (separate state) | 5 | 1 | 6 |
-| `security_account_baseline` | 9 | 6 | 15 |
-| `workload_a_baseline` | 10 | 2 | 12 |
-| `workload_b_baseline` | 10 | 2 | 12 |
-| `workload_a_data_sources` | 18 | 4 | 22 |
-| `workload_b_data_sources` | 18 | 4 | 22 |
-| `cloud_integration` | 7 | 0 | 7 |
-| `unity_catalog` | 8 | 0 | 8 |
-| `workspace_config` | 1 | 3 | 4 |
-| `bronze_ingestion` + `sns_alerts` | 21 | 0 | 21 |
-| **Total (`environments/poc/`)** | **102** | **21** | **123** |
+| Terraform Root | Modules | Resources | Data Sources |
+|----------------|---------|-----------|--------------|
+| `bootstrap/` (local state) | — | 5 | 1 |
+| `foundations/aws-security/` | `security_foundation` | 10 | 5 |
+| `workloads/aws-workload-a/` | `baseline` + `data_sources` | ~28 | ~6 |
+| `workloads/aws-workload-b/` | `baseline` + `data_sources` | ~28 | ~6 |
+| `hub/` | `iam.tf` (inline) + `cloud_integration` + `unity_catalog` + `workspace_config` + `jobs` | ~47 | ~8 |
+| **Total (across 4 roots)** | | **~118** | **~26** |

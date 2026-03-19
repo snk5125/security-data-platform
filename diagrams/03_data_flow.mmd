@@ -18,7 +18,7 @@ graph LR
     %% ── Ingestion layer ──────────────────────────────────────────────────────
     subgraph INGEST ["Ingestion"]
         AL["Auto Loader<br/>cloudFiles · availableNow<br/>directory listing mode"]
-        TI_FETCH["HTTP Fetch<br/>01_bronze_threat_intel_ingest<br/>daily · OCSF formatted"]
+        TI_FETCH["HTTP Fetch<br/>01_bronze_ingest<br/>daily · OCSF formatted"]
     end
 
     %% ── Bronze Delta tables (raw, append-only) ───────────────────────────────
