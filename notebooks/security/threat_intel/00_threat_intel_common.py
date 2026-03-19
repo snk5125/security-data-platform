@@ -6,10 +6,10 @@
 #
 # Provides:
 #   FEED_CONFIGS          — per-feed URL, format, TTL, category, default confidence
-#   BRONZE_TI_TABLE       — security_poc.bronze.threat_intel_raw
-#   SILVER_TI_NETWORK     — security_poc.silver.threat_intel_network
-#   SILVER_TI_DNS         — security_poc.silver.threat_intel_dns  (placeholder)
-#   SILVER_TI_HASH        — security_poc.silver.threat_intel_hash (placeholder)
+#   BRONZE_TI_TABLE       — security_poc.security.threat_intel_raw
+#   SILVER_TI_NETWORK     — security_poc.security.threat_intel_network
+#   SILVER_TI_DNS         — security_poc.security.threat_intel_dns  (placeholder)
+#   SILVER_TI_HASH        — security_poc.security.threat_intel_hash (placeholder)
 #   BRONZE_TI_SCHEMA      — Spark schema for the bronze table
 #   PARSED_IP_SCHEMA      — Return schema for the parse_network_ioc UDF
 #   parse_network_ioc()   — UDF: validate + normalize IP/CIDR → struct
@@ -30,7 +30,7 @@
 #
 # VPC Flow alignment:
 #   bronze.vpc_flow stores IPs in src_endpoint.ip and dst_endpoint.ip (STRING).
-#   silver.threat_intel_network provides:
+#   security.threat_intel_network provides:
 #     ioc_value      — for exact-match joins against single IPs
 #     network_address — CIDR form for ip_in_network() range matching
 #     dest_port      — matches dst_endpoint.port (Feodo C2 port, when known)
@@ -97,10 +97,10 @@ FEED_CONFIGS = {
 # TABLE NAMES
 # ═════════════════════════════════════════════════════════════════════════════
 
-BRONZE_TI_TABLE   = "security_poc.bronze.threat_intel_raw"
-SILVER_TI_NETWORK = "security_poc.silver.threat_intel_network"
-SILVER_TI_DNS     = "security_poc.silver.threat_intel_dns"
-SILVER_TI_HASH    = "security_poc.silver.threat_intel_hash"
+BRONZE_TI_TABLE   = "security_poc.security.threat_intel_raw"
+SILVER_TI_NETWORK = "security_poc.security.threat_intel_network"
+SILVER_TI_DNS     = "security_poc.security.threat_intel_dns"
+SILVER_TI_HASH    = "security_poc.security.threat_intel_hash"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # BRONZE TABLE SCHEMA

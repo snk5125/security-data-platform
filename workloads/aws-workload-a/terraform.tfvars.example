@@ -1,0 +1,6 @@
+aws_region          = "us-east-1"
+account_alias       = "<ACCOUNT_ALIAS>"          # e.g., "workload-a"
+account_id          = "<WORKLOAD_ACCOUNT_ID>"    # 12-digit AWS account ID
+vpc_cidr            = "10.0.0.0/16"
+public_subnet_cidr  = "10.0.1.0/24"
+security_account_id = "<SECURITY_ACCOUNT_ID>"    # For deterministic hub role ARN

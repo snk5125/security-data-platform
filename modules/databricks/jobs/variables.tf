@@ -34,13 +34,13 @@ variable "workload_b_security_logs_bucket_name" {
 variable "notebook_source_dir" {
   description = "Local path to the bronze notebook source files (relative to the root module)"
   type        = string
-  default     = "../../notebooks/bronze"
+  default     = "../../notebooks/bronze/aws"
 }
 
 variable "workspace_notebook_path" {
   description = "Workspace path prefix where bronze notebooks are uploaded"
   type        = string
-  default     = "/Shared/security-lakehouse/bronze"
+  default     = "/Shared/security-lakehouse/bronze/aws"
 }
 
 variable "silver_notebook_source_dir" {
@@ -70,13 +70,13 @@ variable "gold_workspace_notebook_path" {
 variable "threat_intel_notebook_source_dir" {
   description = "Local path to the threat intel notebook source files (relative to the root module)"
   type        = string
-  default     = "../../notebooks/threat_intel"
+  default     = "../../notebooks/security/threat_intel"
 }
 
 variable "threat_intel_workspace_notebook_path" {
   description = "Workspace path prefix where threat intel notebooks are uploaded"
   type        = string
-  default     = "/Shared/security-lakehouse/threat_intel"
+  default     = "/Shared/security-lakehouse/security/threat_intel"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -64,27 +64,27 @@ resource "databricks_notebook" "ocsf_common" {
 
 resource "databricks_notebook" "cloudtrail" {
   depends_on = [databricks_directory.bronze]
-  path       = "${var.workspace_notebook_path}/01_bronze_cloudtrail"
+  path       = "${var.workspace_notebook_path}/01_cloudtrail"
   language   = "PYTHON"
-  source     = "${var.notebook_source_dir}/01_bronze_cloudtrail.py"
+  source     = "${var.notebook_source_dir}/01_cloudtrail.py"
 }
 
 resource "databricks_notebook" "vpc_flow" {
-  path     = "${var.workspace_notebook_path}/02_bronze_vpc_flow"
+  path     = "${var.workspace_notebook_path}/02_vpc_flow"
   language = "PYTHON"
-  source   = "${var.notebook_source_dir}/02_bronze_vpc_flow.py"
+  source   = "${var.notebook_source_dir}/02_vpc_flow.py"
 }
 
 resource "databricks_notebook" "guardduty" {
-  path     = "${var.workspace_notebook_path}/03_bronze_guardduty"
+  path     = "${var.workspace_notebook_path}/03_guardduty"
   language = "PYTHON"
-  source   = "${var.notebook_source_dir}/03_bronze_guardduty.py"
+  source   = "${var.notebook_source_dir}/03_guardduty.py"
 }
 
 resource "databricks_notebook" "config" {
-  path     = "${var.workspace_notebook_path}/04_bronze_config"
+  path     = "${var.workspace_notebook_path}/04_config"
   language = "PYTHON"
-  source   = "${var.notebook_source_dir}/04_bronze_config.py"
+  source   = "${var.notebook_source_dir}/04_config.py"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,7 +295,7 @@ resource "databricks_job" "vpc_flow" {
     }
 
     notebook_task {
-      notebook_path   = databricks_notebook.gold_alerts.path
+      notebook_path = databricks_notebook.gold_alerts.path
       base_parameters = {
         # bootstrap_lookback_days controls the lookback window used only on the
         # very first run when gold.alerts is empty. Subsequent runs use the
@@ -491,9 +491,9 @@ resource "databricks_notebook" "threat_intel_common" {
 # Runs as Task 1 of the threat-intel-pipeline job.
 resource "databricks_notebook" "threat_intel_bronze_ingest" {
   depends_on = [databricks_directory.threat_intel]
-  path       = "${var.threat_intel_workspace_notebook_path}/01_bronze_threat_intel_ingest"
+  path       = "${var.threat_intel_workspace_notebook_path}/01_bronze_ingest"
   language   = "PYTHON"
-  source     = "${var.threat_intel_notebook_source_dir}/01_bronze_threat_intel_ingest.py"
+  source     = "${var.threat_intel_notebook_source_dir}/01_bronze_ingest.py"
 }
 
 # Silver network notebook — normalizes IP/CIDR indicators, filters RFC 1918,
@@ -503,9 +503,9 @@ resource "databricks_notebook" "threat_intel_bronze_ingest" {
 # Runs as Task 2 of the threat-intel-pipeline job (after bronze_ingest).
 resource "databricks_notebook" "threat_intel_silver_network" {
   depends_on = [databricks_directory.threat_intel]
-  path       = "${var.threat_intel_workspace_notebook_path}/02_silver_threat_intel_network"
+  path       = "${var.threat_intel_workspace_notebook_path}/02_silver_network"
   language   = "PYTHON"
-  source     = "${var.threat_intel_notebook_source_dir}/02_silver_threat_intel_network.py"
+  source     = "${var.threat_intel_notebook_source_dir}/02_silver_network.py"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

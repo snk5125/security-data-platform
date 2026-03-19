@@ -126,3 +126,33 @@ resource "databricks_grants" "gold" {
     privileges = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_FUNCTION"]
   }
 }
+
+# ── Additional Schemas ───────────────────────────────────────────────────────
+# Domain-specific schemas beyond the medallion layers (e.g., "security" for
+# threat intel, "operations" for cost/performance). Created dynamically from
+# the extra_schemas variable.
+
+resource "databricks_schema" "extra" {
+  for_each = toset(var.extra_schemas)
+
+  catalog_name = databricks_catalog.this.name
+  name         = each.value
+  comment      = "${each.value} schema"
+
+  force_destroy = true
+
+  depends_on = [databricks_catalog.this]
+}
+
+resource "databricks_grants" "extra_schema" {
+  for_each = toset(var.extra_schemas)
+
+  schema = "${databricks_catalog.this.name}.${each.value}"
+
+  grant {
+    principal  = "account users"
+    privileges = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_FUNCTION"]
+  }
+
+  depends_on = [databricks_schema.extra]
+}

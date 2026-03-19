@@ -20,12 +20,16 @@ variable "managed_storage_bucket_name" {
   type        = string
 }
 
-variable "workload_a_security_logs_bucket_name" {
-  description = "Name of the security-logs S3 bucket in workload account A (e.g., 'lakehouse-workload-a-security-logs-123456')."
-  type        = string
-}
-
-variable "workload_b_security_logs_bucket_name" {
-  description = "Name of the security-logs S3 bucket in workload account B (e.g., 'lakehouse-workload-b-security-logs-123456')."
-  type        = string
+variable "workloads" {
+  description = "List of workload manifests from assemble-workloads.sh. Each entry describes one workload's storage and data products."
+  type = list(object({
+    alias = string
+    cloud = string
+    storage = object({
+      type        = string
+      bucket_name = string
+      bucket_arn  = string
+    })
+    read_only_role_arn = string
+  }))
 }

@@ -7,12 +7,12 @@
 # designed to host multiple alert types (network TI hits, AV detections, etc.).
 #
 # Alert types supported today:
-#   ti_network — VPC Flow × silver.threat_intel_network (IP/CIDR IOC match)
+#   ti_network — VPC Flow × security.threat_intel_network (IP/CIDR IOC match)
 #
 # Alert types reserved for future notebooks:
 #   av_detection — endpoint AV detections (file hash, process, quarantine status)
-#   ti_hash      — file hash × silver.threat_intel_hash (when hash feeds added)
-#   ti_dns       — DNS query × silver.threat_intel_dns  (when DNS feeds added)
+#   ti_hash      — file hash × security.threat_intel_hash (when hash feeds added)
+#   ti_dns       — DNS query × security.threat_intel_dns  (when DNS feeds added)
 #
 # Join strategy (two-pass):
 #   Pass 1 — Exact match:
@@ -43,7 +43,7 @@
 #   Full recompute over lookback_days (default 30). Each run overwrites the
 #   entire gold.alerts partition for alert_type = "ti_network". This avoids
 #   watermark complexity and ensures alerts reflect the current state of
-#   silver.threat_intel_network (indicators may expire between runs).
+#   security.threat_intel_network (indicators may expire between runs).
 #
 # Severity mapping (confidence_score → severity):
 #   3 (High)     → "Critical"
@@ -55,7 +55,7 @@
 #   alert_type discriminator enables partitioned writes and filtered reads.
 #
 # Source: security_poc.bronze.vpc_flow
-#         security_poc.silver.threat_intel_network
+#         security_poc.security.threat_intel_network
 # Target: security_poc.gold.alerts (overwrite for alert_type = "ti_network")
 # Trigger: daily, after silver_network task completes in threat-intel-pipeline
 # -----------------------------------------------------------------------------
@@ -87,7 +87,7 @@ from pyspark.sql.types import BooleanType
 # ─────────────────────────────────────────────────────────────────────────────
 
 BRONZE_VPC_FLOW   = "security_poc.bronze.vpc_flow"
-SILVER_TI_NETWORK = "security_poc.silver.threat_intel_network"
+SILVER_TI_NETWORK = "security_poc.security.threat_intel_network"
 GOLD_ALERTS       = "security_poc.gold.alerts"
 
 # COMMAND ----------
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS {GOLD_ALERTS} (
   observable_value STRING       COMMENT 'Normalized IOC value (IP, hash, domain, etc.)',
 
   -- Foreign key back to the silver table row that generated this alert.
-  observable_id    STRING       COMMENT 'ioc_id from silver.threat_intel_network or silver.threat_intel_hash',
+  observable_id    STRING       COMMENT 'ioc_id from security.threat_intel_network or security.threat_intel_hash',
 
   threat_category  STRING       COMMENT 'c2 | compromised | reputation | malware | phishing | etc.',
 

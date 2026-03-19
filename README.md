@@ -6,10 +6,11 @@ Multi-account AWS security data lakehouse powered by Databricks and Terraform.
 
 This project deploys a complete security data lakehouse across multiple AWS accounts using Databricks Unity Catalog. It collects security telemetry (CloudTrail, VPC Flow Logs, GuardDuty, AWS Config) from workload accounts and centralizes it into a Databricks lakehouse for analysis.
 
-- **95 Terraform resources** across 9 deployment phases
+- **102 Terraform resources** across 9 deployment phases
 - **3 AWS accounts** — 1 security/management hub + 2 workload accounts (extensible)
-- **4 security data sources** per workload account
-- **Full medallion architecture** — Bronze (Auto Loader ingestion), Silver (Config CDC), Gold (EC2 inventory)
+- **4 security data sources** per workload account + 3 external threat intel feeds
+- **Full medallion architecture** — Bronze (Auto Loader + TI feeds), Silver (Config CDC + TI network IOCs), Gold (EC2 inventory + correlated alerts)
+- **Threat intel alert pipeline** — IOC correlation against VPC Flow Logs, ~10-min alert latency, SNS forwarding
 - **Databricks Free Edition compatible** — runs entirely on the Starter Warehouse
 
 ## Architecture
@@ -34,12 +35,13 @@ graph TD
             DW["Serverless Starter Warehouse"]
         end
 
-        subgraph JOBS ["Scheduled Jobs (4 Jobs)"]
+        subgraph JOBS ["Scheduled Jobs (5 Jobs)"]
             direction LR
             J1["CloudTrail"]
-            J2["VPC Flow"]
+            J2["VPC Flow<br/>ingest → gold_alerts → forward_alerts"]
             J3["GuardDuty"]
             J4["Config Pipeline<br/>bronze → silver → gold"]
+            J5["Threat Intel Pipeline<br/>bronze_ingest → silver_network"]
         end
 
         subgraph CREDS ["Storage Credentials"]
@@ -63,6 +65,8 @@ graph TD
             MSB["Managed storage (Delta tables)"]
             STB["Terraform state"]
         end
+
+        SNS["security-lakehouse-alerts SNS topic"]
     end
 
     subgraph WK ["AWS WORKLOAD ACCOUNTS (A, B, ...)"]
@@ -98,6 +102,8 @@ graph TD
     EC2 -.-> DATA
     DATA -->|"logs"| S3W
     JOBS -->|"Auto Loader"| CREDS
+    J5 -->|"HTTP fetch · daily"| CREDS
+    J2 -->|"sns:Publish"| SNS
 ```
 
 ### Account Topology
@@ -115,10 +121,22 @@ Additional workload accounts can be onboarded using the included automation scri
 1. **EC2 instances** in workload accounts generate security telemetry
 2. **AWS services** (CloudTrail, VPC Flow Logs, GuardDuty, Config) write logs to per-account S3 buckets
 3. **Databricks hub role** in the security account chain-assumes into read-only roles in each workload account
-4. **Auto Loader jobs** read from workload S3 buckets via external locations and write to **Bronze** Delta tables
-5. **Silver CDC** normalizes Config snapshots into per-resource change-tracking rows
-6. **Gold EC2 inventory** joins EC2 instances with related resources (ENIs, volumes, security groups) into a current-state table
-7. **Unity Catalog** provides governance across bronze/silver/gold schemas
+4. **Auto Loader jobs** read from workload S3 buckets via external locations and write to **Bronze** Delta tables (every 10–15 min)
+5. **Threat Intel Pipeline** fetches IOC feeds (Feodo Tracker, Emerging Threats, IPsum) daily → `bronze.threat_intel_raw` → MERGE into `silver.threat_intel_network`
+6. **Silver CDC** normalizes Config snapshots into per-resource change-tracking rows
+7. **Gold EC2 inventory** joins EC2 instances with related resources (ENIs, volumes, security groups) into a current-state table
+8. **Gold alerts** (every 10 min) joins `bronze.vpc_flow_raw` against `silver.threat_intel_network` on destination IP using an incremental watermark — new matches appended via MERGE on `alert_id`
+9. **Alert forwarding** reads only new inserts via Delta Change Data Feed and publishes to **SNS** (`security-lakehouse-alerts`) — ~10-min end-to-end alert latency
+10. **Unity Catalog** provides governance across bronze/silver/gold schemas
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/threat-intel-alert-pipeline.md](docs/threat-intel-alert-pipeline.md) | Architecture and design rationale for the TI pipeline — medallion layers, latency tradeoffs, CDF redesign |
+| [docs/playbooks/ti-network-alert-response.md](docs/playbooks/ti-network-alert-response.md) | Incident response playbook — how to triage, investigate, and contain a `ti_network` alert |
+| [docs/playbooks/pipeline-operations.md](docs/playbooks/pipeline-operations.md) | Operations runbook — feed failures, CDF watermark triage, manual trigger procedures, weekly reconciliation |
+| [architecture_diagram.md](architecture_diagram.md) | Full architecture diagrams — high-level, IAM chain, data flow, Terraform module graph |
 
 ## Prerequisites
 
@@ -167,29 +185,20 @@ terraform apply
 
 This creates the S3 bucket and DynamoDB table for remote state. Uses local state (by design — the remote backend can't exist before this runs).
 
-### 3. Deploy the main environment (staged apply)
+### 3. Deploy the multi-root architecture
 
-```bash
-cd environments/poc/
-terraform init
-terraform apply    # Apply all phases, or use staged apply below
-```
+Each root is applied independently in order:
 
-#### Staged Apply Sequence
+| Step | Root | Command |
+|------|------|---------|
+| 1 | `bootstrap/` | Already done above |
+| 2 | `foundations/aws-security/` | `cd foundations/aws-security/ && terraform init && terraform apply` |
+| 3 | `workloads/aws-workload-a/` | `cd workloads/aws-workload-a/ && terraform init && terraform apply` (parallel OK) |
+| 3 | `workloads/aws-workload-b/` | `cd workloads/aws-workload-b/ && terraform init && terraform apply` (parallel OK) |
+| 4 | Assemble workload outputs | `./scripts/assemble-workloads.sh` |
+| 5 | `hub/` | `cd hub/ && terraform init && terraform apply` |
 
-For the initial deployment, a staged apply ensures dependencies are met at each phase:
-
-| Phase | Description | Target |
-|-------|-------------|--------|
-| 1-2 | Bootstrap (already done) | `bootstrap/` |
-| 3 | Security account baseline + workload baselines | `-target=module.security_account_baseline -target=module.workload_a_baseline -target=module.workload_b_baseline` |
-| 4 | Data sources (CloudTrail, Flow Logs, GuardDuty, Config) | `-target=module.workload_a_data_sources -target=module.workload_b_data_sources` |
-| 5 | Databricks cloud integration (storage credentials, external locations) | `-target=module.cloud_integration` |
-| 5.5 | Enable self-assume | Set `enable_self_assume = true` in tfvars, then `terraform apply` |
-| 6 | Unity Catalog (catalog, schemas) | `-target=module.unity_catalog` |
-| 7 | Workspace config (Starter Warehouse) | `-target=module.workspace_config` |
-| 8 | Ingestion pipeline (jobs + notebooks — bronze, silver, gold) | `-target=module.bronze_ingestion` |
-| 9 | Full apply | `terraform apply` (validates everything) |
+Or use `./scripts/apply-all.sh` for automated sequencing.
 
 ### 4. Validate
 
@@ -203,26 +212,44 @@ terraform plan    # Should show no changes
 
 ```
 security-data-lakehouse/
-├── bootstrap/                          # Phase 1-2: State backend (local state)
+├── bootstrap/                          # Step 1: State backend (local state)
 │   ├── main.tf                         #   S3 bucket + DynamoDB table
 │   ├── outputs.tf
 │   ├── versions.tf
 │   └── validate.sh                     #   Post-apply validation script
 │
-├── environments/poc/                   # Phases 3-9: Root module
-│   ├── backend.tf.example              #   S3 backend template
-│   ├── terraform.tfvars.example        #   Variable values template
-│   ├── versions.tf                     #   Terraform + provider versions
-│   ├── providers.tf                    #   4 providers: aws (x3) + databricks
-│   ├── variables.tf                    #   All input variables
-│   ├── locals.tf                       #   Common tags, naming, derived values
-│   ├── main.tf                         #   Module wiring (all 9 phases)
-│   ├── outputs.tf                      #   Key resource identifiers
-│   └── validate-phase*.sh              #   Per-phase validation scripts
+├── foundations/
+│   └── aws-security/                   # Step 2: Security account foundation
+│       ├── main.tf                     #   S3 managed storage, KMS, SNS alerts
+│       ├── variables.tf
+│       ├── outputs.tf
+│       └── backend.tf.example
+│
+├── workloads/
+│   ├── _template-aws/                  # Template for new workload accounts
+│   ├── aws-workload-a/                 # Step 3: Workload account A
+│   │   ├── main.tf                     #   VPC, EC2, data sources
+│   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   └── backend.tf.example
+│   └── aws-workload-b/                 # Step 3: Workload account B
+│
+├── hub/                                # Step 5: Databricks integration hub
+│   ├── main.tf                         #   IAM roles, storage creds, Unity Catalog, jobs
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── backend.tf.example
+│   └── workloads.auto.tfvars.json      #   Generated by assemble-workloads.sh
+│
+├── scripts/
+│   ├── assemble-workloads.sh           # Step 4: Collect workload outputs → hub
+│   └── apply-all.sh                    #   Automated full apply sequence
+│
+├── environments/poc/                   # (deprecated) Original monolith root
 │
 ├── modules/
 │   ├── aws/
-│   │   ├── security-account-baseline/  #   Hub IAM roles, managed S3/KMS
+│   │   ├── security-foundation/        #   S3 managed storage, KMS, SNS
 │   │   ├── workload-account-baseline/  #   VPC, EC2, security groups, SSH keys
 │   │   └── data-sources/               #   CloudTrail, Flow Logs, GuardDuty, Config
 │   │
@@ -233,43 +260,25 @@ security-data-lakehouse/
 │       └── jobs/                       #   Bronze ingestion jobs
 │
 ├── notebooks/
-│   ├── bronze/                         #   Auto Loader notebooks (4 data sources)
-│   │   ├── 00_ocsf_common.py           #     Shared OCSF helper (imported via %run)
-│   │   ├── 01_bronze_cloudtrail.py
-│   │   ├── 02_bronze_vpc_flow.py
-│   │   ├── 03_bronze_guardduty.py
-│   │   └── 04_bronze_config.py
+│   ├── bronze/aws/                     #   Auto Loader notebooks (4 data sources)
 │   ├── silver/                         #   Silver CDC notebooks
-│   │   └── 01_silver_config_cdc.py     #     Config → normalized CDC rows
-│   └── gold/                           #   Gold analytical notebooks
-│       └── 01_gold_ec2_inventory.py    #     EC2 current-state inventory
+│   ├── gold/                           #   Gold analytical notebooks
+│   └── security/threat_intel/          #   Threat intel feed notebooks
 │
 ├── diagrams/                           #   Architecture diagrams (Mermaid sources)
-│   ├── 01_high_level_architecture.mmd
-│   ├── 02_iam_trust_chain.mmd
-│   ├── 03_data_flow.mmd
-│   └── 04_terraform_modules.mmd
-│
-├── onboard_workload_account.sh         #   Automation: add a new workload account
-├── onboarding_new_aws_accounts.md      #   Guide: add a new workload account
-├── onboard_workload_account_usage.md   #   Usage guide for the onboarding script
+├── docs/                               #   Pipeline docs and playbooks
 └── architecture_diagram.md             #   Detailed architecture with inline diagrams
 ```
 
 ## Adding Workload Accounts
 
-The architecture supports any number of workload accounts. Each new account adds ~27 Terraform resources and requires modifications to 16 files.
+The architecture supports any number of workload accounts via the template-copy workflow:
 
-**Automated:** Run the onboarding script:
-```bash
-./onboard_workload_account.sh \
-  --alias workload-c \
-  --account-id 123456789012 \
-  --vpc-cidr 10.2.0.0/16 \
-  --subnet-cidr 10.2.1.0/24
-```
-
-See [onboarding_new_aws_accounts.md](onboarding_new_aws_accounts.md) for the full guide and [onboard_workload_account_usage.md](onboard_workload_account_usage.md) for script details.
+1. Copy `workloads/_template-aws/` to `workloads/aws-workload-<name>/`
+2. Fill in `terraform.tfvars` with the account ID, VPC CIDR, etc.
+3. Configure `backend.tf` from the example
+4. Run `terraform init && terraform apply`
+5. Re-run `scripts/assemble-workloads.sh` and `terraform apply` in `hub/`
 
 ## Databricks Free Edition Notes
 

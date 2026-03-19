@@ -7,9 +7,9 @@
 #                                     access to security log buckets
 #   2. Storage credential (managed) — wraps the managed storage role for Delta
 #                                     table read/write
-#   3. External location (workload A) — s3://{workload-a-security-logs}/
-#   4. External location (workload B) — s3://{workload-b-security-logs}/
-#   5. External location (managed)    — s3://{managed-storage-bucket}/
+#   3. External locations (workloads)  — one per workload alias via for_each,
+#                                        s3://{workload-security-logs}/
+#   4. External location (managed)    — s3://{managed-storage-bucket}/
 #   6. Grants on hub credential     — READ_FILES for account users
 #   7. Grants on managed credential — READ_FILES + WRITE_FILES for account users
 #
@@ -27,7 +27,7 @@
 #   - Output the external IDs assigned by Databricks
 #   - Feed them back into terraform.tfvars for Phase 5.5 trust policy update
 #
-# Resources created: 7
+# Resources created: 5 + (1 per workload in var.workloads)
 # -----------------------------------------------------------------------------
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -71,34 +71,25 @@ resource "databricks_storage_credential" "managed" {
 # knows which IAM role to assume when reading from or writing to each bucket.
 # Each location must reference its credential by name (not ARN).
 
-# Workload A security logs — CloudTrail, VPC Flow Logs, GuardDuty, AWS Config
-# data from workload account A lands in this bucket (Phase 4).
-resource "databricks_external_location" "workload_a" {
-  name            = "workload-a-security-logs"
-  url             = "s3://${var.workload_a_security_logs_bucket_name}/"
+# One external location per workload, keyed by alias (e.g., "workload_a",
+# "workload_b"). Each points to the workload's security-logs S3 bucket and
+# uses the hub credential for cross-account IAM role chain access.
+#
+# Read-only: the hub role intentionally has only S3 read permissions on
+# workload buckets. Without this flag, Databricks validates WRITE+DELETE
+# and rejects the location. Security logs are written by AWS services,
+# not Databricks.
+#
+# Explicit dependency: the credential must be fully registered before
+# Databricks can validate each external location's S3 access.
+resource "databricks_external_location" "workload" {
+  for_each = { for w in var.workloads : w.alias => w }
+
+  name            = "security-logs-${each.key}"
+  url             = "s3://${each.value.storage.bucket_name}/"
   credential_name = databricks_storage_credential.hub.name
-  comment         = "Security logs from workload account A (CloudTrail, Flow Logs, GuardDuty, Config)"
-
-  # Read-only: the hub role intentionally has only S3 read permissions on
-  # workload buckets. Without this flag, Databricks validates WRITE+DELETE
-  # and rejects the location. Security logs are written by AWS services,
-  # not Databricks.
-  read_only = true
-
-  # Explicit dependency: the credential must be fully registered before
-  # Databricks can validate the external location's S3 access.
-  depends_on = [databricks_storage_credential.hub]
-}
-
-# Workload B security logs — same data sources as workload A but from the
-# second workload account.
-resource "databricks_external_location" "workload_b" {
-  name            = "workload-b-security-logs"
-  url             = "s3://${var.workload_b_security_logs_bucket_name}/"
-  credential_name = databricks_storage_credential.hub.name
-  comment         = "Security logs from workload account B (CloudTrail, Flow Logs, GuardDuty, Config)"
-
-  read_only = true
+  read_only       = true
+  comment         = "Security logs for ${each.key} (${each.value.cloud})"
 
   depends_on = [databricks_storage_credential.hub]
 }

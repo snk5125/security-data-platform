@@ -20,3 +20,9 @@ variable "managed_storage_bucket_name" {
   description = "Name of the managed storage S3 bucket — used as the catalog's storage root for managed tables"
   type        = string
 }
+
+variable "extra_schemas" {
+  description = "Additional schemas to create beyond the medallion layers (bronze/silver/gold)."
+  type        = list(string)
+  default     = []
+}

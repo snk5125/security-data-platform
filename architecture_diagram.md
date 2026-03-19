@@ -20,14 +20,15 @@ graph TB
             CAT --> SG
         end
 
-        subgraph "Scheduled Jobs (4 Jobs, PAUSED)"
-            J1["CloudTrail Job<br/>15min trigger"]
-            J2["VPC Flow Job<br/>10min trigger"]
-            J3["GuardDuty Job<br/>6hr trigger"]
-            J4["Config Pipeline<br/>24hr trigger<br/>3 tasks: bronze → silver CDC → gold EC2"]
+        subgraph "Scheduled Jobs (5 Jobs, PAUSED)"
+            J1["CloudTrail Job<br/>15min trigger · 1 task"]
+            J2["bronze-vpc-flow-ingest<br/>10min trigger · 3 tasks<br/>ingest → gold_alerts → forward_alerts"]
+            J3["GuardDuty Job<br/>6hr trigger · 1 task"]
+            J4["Config Pipeline<br/>24hr trigger · 3 tasks<br/>bronze → silver CDC → gold EC2"]
+            J5["Threat Intel Pipeline<br/>daily 01:00 UTC · 2 tasks<br/>bronze_ingest → silver_network"]
         end
 
-        subgraph "Notebooks (7)"
+        subgraph "Notebooks (12)"
             subgraph "Bronze (5)"
                 N0["00_ocsf_common.py"]
                 N1["01_bronze_cloudtrail.py"]
@@ -35,11 +36,18 @@ graph TB
                 N3["03_bronze_guardduty.py"]
                 N4["04_bronze_config.py"]
             end
+            subgraph "Threat Intel (3)"
+                NTI0["00_threat_intel_common.py"]
+                NTI1["01_bronze_threat_intel_ingest.py"]
+                NTI2["02_silver_threat_intel_network.py"]
+            end
             subgraph "Silver (1)"
                 N5["01_silver_config_cdc.py"]
             end
-            subgraph "Gold (1)"
+            subgraph "Gold (3)"
                 N6["01_gold_ec2_inventory.py"]
+                N7["02_gold_alerts.py"]
+                N8["03_gold_alerts_forward.py"]
             end
         end
 
@@ -56,12 +64,17 @@ graph TB
 
         J1 --> N1
         J2 --> N2
+        J2 --> N7
+        J2 --> N8
         J3 --> N3
         J4 --> N4
         J4 --> N5
         J4 --> N6
+        J5 --> NTI1
+        J5 --> NTI2
         N1 & N2 & N3 & N4 --> DW
-        N5 & N6 --> DW
+        NTI1 & NTI2 --> DW
+        N5 & N6 & N7 & N8 --> DW
         HC --> EL1 & EL2
         MC --> EL3
     end
@@ -79,6 +92,11 @@ graph TB
         end
 
         DDB["DynamoDB: security-lakehouse-tflock<br/>State locking"]
+
+        subgraph "SNS Alerts"
+            SNS["security-lakehouse-alerts<br/>SNS topic"]
+            SNSU["lakehouse-sns-publisher<br/>IAM user · sns:Publish only"]
+        end
     end
 
     subgraph "AWS: Workload A (<WORKLOAD_A_ACCOUNT_ID>)"
@@ -192,10 +210,16 @@ graph LR
     HUB -->|"kms:Decrypt"| KMSB
 ```
 
-## Data Flow: S3 → Bronze → Silver → Gold
+## Data Flow: S3 + Threat Intel Feeds → Bronze → Silver → Gold → SNS
 
 ```mermaid
 graph LR
+    subgraph "External Threat Intel Feeds (daily)"
+        FEODO["Feodo Tracker<br/>C2 IPs"]
+        ET["Emerging Threats<br/>IP blocklist"]
+        IPSUM["IPsum<br/>IP reputation"]
+    end
+
     subgraph "Workload A (<WORKLOAD_A_ACCOUNT_ID>)"
         S3A["S3 Bucket<br/>lakehouse-workload-a-security-logs"]
     end
@@ -204,23 +228,32 @@ graph LR
         S3B["S3 Bucket<br/>lakehouse-workload-b-security-logs"]
     end
 
-    subgraph "Databricks Auto Loader"
-        AL["cloudFiles reader<br/>trigger(availableNow=True)<br/>directory listing mode"]
+    subgraph "Ingestion"
+        AL["Auto Loader<br/>cloudFiles · availableNow<br/>directory listing mode"]
+        TI_FETCH["HTTP Fetch<br/>01_bronze_threat_intel_ingest<br/>daily · OCSF formatted"]
     end
 
     subgraph "Bronze Delta Tables"
         CT["cloudtrail_raw"]
-        VF["vpc_flow_raw"]
+        VF["vpc_flow_raw<br/>(OCSF network activity)"]
         GD["guardduty_raw"]
         CF["config_raw"]
+        TIR["threat_intel_raw<br/>IOC feed rows · 14-day TTL"]
     end
 
     subgraph "Silver Delta Tables"
         CDC["config_cdc<br/>Normalized CDC rows<br/>per resource type"]
+        TIN["threat_intel_network<br/>Deduplicated IOCs<br/>MERGE on ioc_id · TTL-managed"]
     end
 
     subgraph "Gold Delta Tables"
         EC2["ec2_inventory<br/>Current-state per instance<br/>ENIs, volumes, SGs joined"]
+        ALERTS["alerts<br/>vpc_flow × threat_intel joins<br/>MERGE on alert_id"]
+        AFWD["alerts_forwarded<br/>CDF version watermark<br/>dedup + delivery tracking"]
+    end
+
+    subgraph "AWS SNS (Security Account)"
+        SNS["security-lakehouse-alerts<br/>SNS topic · sns:Publish"]
     end
 
     subgraph "S3 Paths"
@@ -236,9 +269,14 @@ graph LR
     P2 --> AL --> VF
     P3 --> AL --> GD
     P4 --> AL --> CF
+    FEODO & ET & IPSUM --> TI_FETCH --> TIR
 
     CF -->|"CDF / incremental"| CDC
     CDC -->|"window + MERGE"| EC2
+    TIR -->|"MERGE on ioc_id · daily"| TIN
+    VF & TIN -->|"watermark join<br/>10-min incremental<br/>MERGE on alert_id"| ALERTS
+    ALERTS -->|"CDF read · inserts only"| AFWD
+    ALERTS -->|"sns:Publish per new alert"| SNS
 ```
 
 ## Terraform Module Dependency Graph
@@ -263,7 +301,7 @@ graph TD
 
     WC["module.workspace_config<br/>1 resource + 3 data sources<br/>Cluster policy"]
 
-    BI["module.bronze_ingestion<br/>14 resources<br/>7 notebooks, 3 directories, 4 jobs<br/>Bronze + Silver CDC + Gold EC2"]
+    BI["module.bronze_ingestion<br/>21 resources<br/>12 notebooks, 3 directories, 5 jobs<br/>Bronze + Silver CDC + Gold EC2<br/>+ Threat Intel + Alerts + SNS"]
 
     BOOT --> SAB
     SAB --> WAB & WBB
@@ -289,5 +327,5 @@ graph TD
 | `cloud_integration` | 7 | 0 | 7 |
 | `unity_catalog` | 8 | 0 | 8 |
 | `workspace_config` | 1 | 3 | 4 |
-| `bronze_ingestion` | 14 | 0 | 14 |
-| **Total (`environments/poc/`)** | **95** | **21** | **116** |
+| `bronze_ingestion` + `sns_alerts` | 21 | 0 | 21 |
+| **Total (`environments/poc/`)** | **102** | **21** | **123** |

@@ -1,4 +1,12 @@
 graph LR
+    %% ── External threat intel feeds (fetched daily by HTTP) ──────────────────
+    subgraph TI_FEEDS ["External Threat Intel Feeds (daily)"]
+        FEODO["Feodo Tracker<br/>C2 IPs"]
+        ET["Emerging Threats<br/>IP blocklist"]
+        IPSUM["IPsum<br/>IP reputation"]
+    end
+
+    %% ── Workload account S3 log buckets ──────────────────────────────────────
     subgraph "Workload A (<WORKLOAD_A_ACCOUNT_ID>)"
         S3A["S3 Bucket<br/>lakehouse-workload-a-security-logs"]
     end
@@ -7,25 +15,40 @@ graph LR
         S3B["S3 Bucket<br/>lakehouse-workload-b-security-logs"]
     end
 
-    subgraph "Databricks Auto Loader"
-        AL["cloudFiles reader<br/>trigger(availableNow=True)<br/>directory listing mode"]
+    %% ── Ingestion layer ──────────────────────────────────────────────────────
+    subgraph INGEST ["Ingestion"]
+        AL["Auto Loader<br/>cloudFiles · availableNow<br/>directory listing mode"]
+        TI_FETCH["HTTP Fetch<br/>01_bronze_threat_intel_ingest<br/>daily · OCSF formatted"]
     end
 
+    %% ── Bronze Delta tables (raw, append-only) ───────────────────────────────
     subgraph "Bronze Delta Tables"
         CT["cloudtrail_raw"]
-        VF["vpc_flow_raw"]
+        VF["vpc_flow_raw<br/>(OCSF network activity)"]
         GD["guardduty_raw"]
         CF["config_raw"]
+        TIR["threat_intel_raw<br/>IOC feed rows · 14-day TTL"]
     end
 
+    %% ── Silver Delta tables (normalized, deduplicated) ───────────────────────
     subgraph "Silver Delta Tables"
         CDC["config_cdc<br/>Normalized CDC rows<br/>per resource type"]
+        TIN["threat_intel_network<br/>Deduplicated IOCs<br/>MERGE on ioc_id · TTL-managed"]
     end
 
+    %% ── Gold Delta tables (correlated detections + inventory) ────────────────
     subgraph "Gold Delta Tables"
         EC2["ec2_inventory<br/>Current-state per instance<br/>ENIs, volumes, SGs joined"]
+        ALERTS["alerts<br/>vpc_flow × threat_intel joins<br/>MERGE on alert_id"]
+        AFWD["alerts_forwarded<br/>CDF version watermark<br/>dedup + delivery tracking"]
     end
 
+    %% ── AWS SNS output ───────────────────────────────────────────────────────
+    subgraph "AWS SNS (Security Account)"
+        SNS["security-lakehouse-alerts<br/>SNS topic · sns:Publish"]
+    end
+
+    %% ── S3 log path labels ───────────────────────────────────────────────────
     subgraph "S3 Paths"
         P1["cloudtrail/AWSLogs/ - JSON.gz"]
         P2["vpc-flow-logs/AWSLogs/ - text.gz"]
@@ -33,6 +56,7 @@ graph LR
         P4["config/AWSLogs/ - JSON.gz"]
     end
 
+    %% ── Edges: workload S3 → Auto Loader → bronze ───────────────────────────
     S3A --> P1 & P2 & P3 & P4
     S3B --> P1 & P2 & P3 & P4
     P1 --> AL --> CT
@@ -40,5 +64,30 @@ graph LR
     P3 --> AL --> GD
     P4 --> AL --> CF
 
+    %% ── Edges: TI feeds → bronze ─────────────────────────────────────────────
+    FEODO & ET & IPSUM --> TI_FETCH --> TIR
+
+    %% ── Edges: bronze → silver (Config CDC pipeline, daily) ─────────────────
     CF -->|"CDF / incremental"| CDC
     CDC -->|"window + MERGE"| EC2
+
+    %% ── Edges: bronze → silver (TI pipeline, daily MERGE on ioc_id) ─────────
+    TIR -->|"MERGE on ioc_id<br/>daily"| TIN
+
+    %% ── Edges: silver + bronze → gold (VPC flow ingest, every 10 min) ───────
+    VF & TIN -->|"watermark join<br/>10-min incremental<br/>MERGE on alert_id"| ALERTS
+
+    %% ── Playbooks ────────────────────────────────────────────────────────────
+    subgraph PLAYBOOKS ["Playbooks (docs/playbooks/)"]
+        PB1["ti-network-alert-response.md<br/>Triage · Investigation · Containment"]
+        PB2["pipeline-operations.md<br/>Feed failures · CDF triage · Runbooks"]
+    end
+
+    %% ── Edges: gold → forwarding (CDF-based, every 10 min) ──────────────────
+    ALERTS -->|"CDF read<br/>inserts only"| AFWD
+    ALERTS -->|"sns:Publish<br/>per new alert"| SNS
+
+    %% ── Edges: SNS → analyst (playbook-guided response) ─────────────────────
+    SNS -->|"alert notification"| PB1
+    ALERTS & AFWD -.->|"investigation queries"| PB1
+    PB2 -.->|"triage procedures"| ALERTS

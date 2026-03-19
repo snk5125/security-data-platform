@@ -1,0 +1,4 @@
+aws_region                  = "us-east-1"
+security_account_id         = "<SECURITY_ACCOUNT_ID>"
+organization_id             = "<ORGANIZATION_ID>"
+managed_storage_bucket_name = "security-lakehouse-managed-<SECURITY_ACCOUNT_ID>"

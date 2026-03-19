@@ -2,9 +2,9 @@
 # -----------------------------------------------------------------------------
 # Silver Layer: Threat Intelligence Network Indicator Normalization
 # -----------------------------------------------------------------------------
-# Reads the latest bronze.threat_intel_raw batch per feed, normalizes IP and
+# Reads the latest security.threat_intel_raw batch per feed, normalizes IP and
 # CIDR indicators, filters private/reserved addresses, and MERGEs results into
-# silver.threat_intel_network.
+# security.threat_intel_network.
 #
 # Normalization steps:
 #   1. Read only the most recent fetch_timestamp per feed from bronze — avoids
@@ -47,10 +47,10 @@
 # DNS and hash placeholder tables are created here to establish schemas
 # for future feed additions without requiring schema changes at that time.
 #
-# Source: security_poc.bronze.threat_intel_raw
-# Target: security_poc.silver.threat_intel_network
-#         security_poc.silver.threat_intel_dns     (created if not exists)
-#         security_poc.silver.threat_intel_hash    (created if not exists)
+# Source: security_poc.security.threat_intel_raw
+# Target: security_poc.security.threat_intel_network
+#         security_poc.security.threat_intel_dns     (created if not exists)
+#         security_poc.security.threat_intel_hash    (created if not exists)
 # Trigger: daily, after bronze_ingest task completes
 # -----------------------------------------------------------------------------
 
@@ -364,7 +364,7 @@ source_count = source_df.count()
 print(f"\nSource rows for MERGE: {source_count}")
 
 # ═════════════════════════════════════════════════════════════════════════════
-# MERGE INTO silver.threat_intel_network
+# MERGE INTO security.threat_intel_network
 # ═════════════════════════════════════════════════════════════════════════════
 # Key: ioc_id (SHA-256 of ioc_value + feed_name)
 #
@@ -436,7 +436,7 @@ silver = spark.table(SILVER_TI_NETWORK)
 total  = silver.count()
 
 print(f"\n{'='*60}")
-print(f"silver.threat_intel_network — total rows: {total}")
+print(f"security.threat_intel_network — total rows: {total}")
 print(f"{'='*60}")
 
 print("\nBy feed / category / confidence:")

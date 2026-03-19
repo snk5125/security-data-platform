@@ -30,14 +30,9 @@ output "managed_credential_external_id" {
   value       = databricks_storage_credential.managed.aws_iam_role[0].external_id
 }
 
-output "workload_a_external_location_url" {
-  description = "S3 URL for workload A external location — used by Auto Loader in Phase 8"
-  value       = databricks_external_location.workload_a.url
-}
-
-output "workload_b_external_location_url" {
-  description = "S3 URL for workload B external location — used by Auto Loader in Phase 8"
-  value       = databricks_external_location.workload_b.url
+output "workload_external_location_urls" {
+  description = "Map of workload alias → external location URL."
+  value       = { for k, v in databricks_external_location.workload : k => v.url }
 }
 
 output "managed_external_location_url" {

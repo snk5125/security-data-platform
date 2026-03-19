@@ -25,3 +25,8 @@ output "gold_schema_name" {
   description = "Name of the gold schema — analytical products target"
   value       = databricks_schema.gold.name
 }
+
+output "extra_schema_names" {
+  description = "Map of extra schema names."
+  value       = { for k, v in databricks_schema.extra : k => v.name }
+}
