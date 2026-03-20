@@ -1,0 +1,3 @@
+subscription_id = "your-azure-subscription-id"
+location        = "eastus"
+name_prefix     = "lakehouse"

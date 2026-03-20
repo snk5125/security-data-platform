@@ -30,6 +30,7 @@ module "cloud_integration" {
   managed_storage_role_arn    = local.managed_storage_role_arn
   managed_storage_bucket_name = var.managed_storage_bucket_name
   workloads                   = var.workloads
+  azure_credentials           = var.azure_credentials
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -67,17 +68,11 @@ module "jobs" {
   catalog_name                = var.catalog_name
   managed_storage_bucket_name = var.managed_storage_bucket_name
 
-  # Workload bucket names — extract from workload manifests.
-  # The jobs module still expects per-workload bucket names (not refactored
-  # to for_each yet — jobs reference specific S3 paths per data source).
-  workload_a_security_logs_bucket_name = try(
-    [for w in var.workloads : w.storage.bucket_name if w.alias == "workload-a"][0],
-    ""
-  )
-  workload_b_security_logs_bucket_name = try(
-    [for w in var.workloads : w.storage.bucket_name if w.alias == "workload-b"][0],
-    ""
-  )
+  # Dynamic workloads map — replaces individual bucket name variables.
+  workloads = { for w in var.workloads : replace(w.alias, "-", "_") => {
+    cloud       = w.cloud
+    storage_url = w.storage.url
+  } }
 
   # SNS forwarding credentials from foundation root.
   sns_topic_arn                   = var.sns_topic_arn
@@ -90,8 +85,10 @@ module "jobs" {
   silver_notebook_source_dir       = "../notebooks/silver"
   gold_notebook_source_dir         = "../notebooks/gold"
   threat_intel_notebook_source_dir = "../notebooks/security/threat_intel"
+  azure_notebook_source_dir        = "../notebooks/bronze/azure"
 
-  # Workspace notebook paths — updated for reorganized structure.
+  # Workspace notebook paths.
   workspace_notebook_path              = "/Shared/security-lakehouse/bronze/aws"
   threat_intel_workspace_notebook_path = "/Shared/security-lakehouse/security/threat_intel"
+  azure_workspace_notebook_path        = "/Shared/security-lakehouse/bronze/azure"
 }

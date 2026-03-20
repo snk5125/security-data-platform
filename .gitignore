@@ -90,6 +90,9 @@ hub/workloads.auto.tfvars.json
 # State migration backups
 .state-migration-backup/
 
+# Git worktrees (isolated development workspaces)
+.worktrees/
+
 # Backend configuration — all roots use backend.tf.example as template
 **/backend.tf
 !**/backend.tf.example

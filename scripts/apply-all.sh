@@ -30,9 +30,27 @@ echo "=== Step 1/4: Bootstrap ==="
 (cd "$REPO_ROOT/bootstrap" && terraform init && terraform apply $APPROVE_FLAG)
 echo ""
 
-# ── Step 2: Foundation ─────────────────────────────────────────────────────
-echo "=== Step 2/4: Foundation (aws-security) ==="
-(cd "$REPO_ROOT/foundations/aws-security" && terraform init && terraform apply $APPROVE_FLAG)
+# ── Step 2: Foundations (parallel) ─────────────────────────────────────────
+echo "=== Step 2/4: Foundations (aws-security + azure-security) ==="
+pids=()
+dirs=()
+
+(cd "$REPO_ROOT/foundations/aws-security" && terraform init && terraform apply $APPROVE_FLAG) &
+pids+=($!)
+dirs+=("$REPO_ROOT/foundations/aws-security")
+
+if [[ -d "$REPO_ROOT/foundations/azure-security" && -f "$REPO_ROOT/foundations/azure-security/main.tf" ]]; then
+  (cd "$REPO_ROOT/foundations/azure-security" && terraform init && terraform apply $APPROVE_FLAG) &
+  pids+=($!)
+  dirs+=("$REPO_ROOT/foundations/azure-security")
+fi
+
+for i in "${!pids[@]}"; do
+  if ! wait "${pids[$i]}"; then
+    echo "  ERROR: $(basename "${dirs[$i]}") foundation apply failed."
+    exit 1
+  fi
+done
 echo ""
 
 # ── Step 3: Workloads (parallel) ───────────────────────────────────────────

@@ -29,6 +29,16 @@ output "threat_intel_pipeline_job_id" {
   value       = databricks_job.threat_intel_pipeline.id
 }
 
+output "activity_log_job_id" {
+  description = "Databricks job ID for Azure Activity Log ingestion."
+  value       = databricks_job.activity_log.id
+}
+
+output "azure_vnet_flow_job_id" {
+  description = "Databricks job ID for Azure VNet Flow ingestion + alerts."
+  value       = databricks_job.azure_vnet_flow.id
+}
+
 output "alerts_secret_scope_name" {
   description = "Databricks Secret Scope name holding SNS credentials — 'security-lakehouse'"
   value       = databricks_secret_scope.security_lakehouse.name
@@ -46,5 +56,8 @@ output "notebook_paths" {
     ec2_inventory       = databricks_notebook.ec2_inventory.path
     gold_alerts         = databricks_notebook.gold_alerts.path
     gold_alerts_forward = databricks_notebook.gold_alerts_forward.path
+    azure_common        = databricks_notebook.azure_common.path
+    activity_log        = databricks_notebook.activity_log.path
+    azure_vnet_flow     = databricks_notebook.azure_vnet_flow.path
   }
 }

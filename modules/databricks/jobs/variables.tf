@@ -21,14 +21,13 @@ variable "managed_storage_bucket_name" {
   type        = string
 }
 
-variable "workload_a_security_logs_bucket_name" {
-  description = "Workload A security logs S3 bucket name — source for Auto Loader"
-  type        = string
-}
-
-variable "workload_b_security_logs_bucket_name" {
-  description = "Workload B security logs S3 bucket name — source for Auto Loader"
-  type        = string
+variable "workloads" {
+  description = "Map of workload alias to cloud type and storage URL. Used to generate job parameters dynamically."
+  type = map(object({
+    cloud       = string
+    storage_url = string
+  }))
+  default = {}
 }
 
 variable "notebook_source_dir" {
@@ -77,6 +76,18 @@ variable "threat_intel_workspace_notebook_path" {
   description = "Workspace path prefix where threat intel notebooks are uploaded"
   type        = string
   default     = "/Shared/security-lakehouse/security/threat_intel"
+}
+
+variable "azure_notebook_source_dir" {
+  description = "Local path to the Azure bronze notebook source files"
+  type        = string
+  default     = "../../notebooks/bronze/azure"
+}
+
+variable "azure_workspace_notebook_path" {
+  description = "Workspace path prefix where Azure bronze notebooks are uploaded"
+  type        = string
+  default     = "/Shared/security-lakehouse/bronze/azure"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

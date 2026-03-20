@@ -34,11 +34,14 @@ locals {
   silver_checkpoint_base = "s3://${var.managed_storage_bucket_name}/checkpoints"
 
   # Common job parameters passed to every notebook via widgets.
-  common_params = {
-    workload_a_bucket = var.workload_a_security_logs_bucket_name
-    workload_b_bucket = var.workload_b_security_logs_bucket_name
-    checkpoint_base   = local.checkpoint_base
-  }
+  # Generates one parameter per workload: "{alias}_storage_url" => url
+  # Example: workload_a_storage_url = "s3://bucket-name/"
+  #          workload_b_storage_url = "s3://bucket-name/"
+  #          azure_workload_a_storage_url = "abfss://container@account.dfs.core.windows.net/"
+  common_params = merge(
+    { checkpoint_base = local.checkpoint_base },
+    { for alias, w in var.workloads : "${alias}_storage_url" => w.storage_url }
+  )
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -509,6 +512,36 @@ resource "databricks_notebook" "threat_intel_silver_network" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Azure bronze notebooks — uploaded to a dedicated workspace directory.
+# These notebooks ingest Azure Activity Log and VNet Flow Logs from ADLS Gen2.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_directory" "azure_bronze" {
+  path = var.azure_workspace_notebook_path
+}
+
+resource "databricks_notebook" "azure_common" {
+  depends_on = [databricks_directory.azure_bronze]
+  path       = "${var.azure_workspace_notebook_path}/00_azure_common"
+  language   = "PYTHON"
+  source     = "${var.azure_notebook_source_dir}/00_azure_common.py"
+}
+
+resource "databricks_notebook" "activity_log" {
+  depends_on = [databricks_directory.azure_bronze]
+  path       = "${var.azure_workspace_notebook_path}/01_activity_log"
+  language   = "PYTHON"
+  source     = "${var.azure_notebook_source_dir}/01_activity_log.py"
+}
+
+resource "databricks_notebook" "azure_vnet_flow" {
+  depends_on = [databricks_directory.azure_bronze]
+  path       = "${var.azure_workspace_notebook_path}/02_vnet_flow"
+  language   = "PYTHON"
+  source     = "${var.azure_notebook_source_dir}/02_vnet_flow.py"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Gold notebooks — uploaded to the shared gold workspace directory.
 # The gold alerts notebook reads from bronze.vpc_flow and
 # silver.threat_intel_network to produce the unified gold.alerts table.
@@ -621,5 +654,136 @@ resource "databricks_job" "threat_intel_pipeline" {
   tags = {
     phase       = "bronze-silver"
     data_source = "threat_intel"
+  }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 3. AZURE JOBS
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Azure Activity Log Job — 15-minute trigger, 1 task
+# Ingests Azure Activity Log from ADLS Gen2 into bronze.activity_log_raw.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "activity_log" {
+  depends_on = [databricks_notebook.azure_common]
+  name       = "bronze-activity-log-ingest"
+
+  task {
+    task_key = "ingest"
+
+    notebook_task {
+      notebook_path   = databricks_notebook.activity_log.path
+      base_parameters = local.common_params
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 0/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    phase       = "bronze"
+    data_source = "activity_log"
+    cloud       = "azure"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Azure VNet Flow Job — 10-minute trigger, 3-task chain
+# Mirrors the AWS VPC Flow job: ingest → gold_alerts → forward_alerts.
+# Azure VNet Flow records are normalized to the same OCSF Network Activity
+# schema, so the same gold_alerts notebook handles correlation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "azure_vnet_flow" {
+  depends_on = [
+    databricks_notebook.azure_common,
+    databricks_notebook.gold_alerts,
+    databricks_notebook.gold_alerts_forward,
+    databricks_secret.sns_access_key_id,
+    databricks_secret.sns_secret_access_key,
+    databricks_secret.sns_topic_arn,
+    databricks_secret.aws_region,
+  ]
+  name = "bronze-azure-vnet-flow-ingest"
+
+  # Task 1: Bronze ingest — Auto Loader reads Azure VNet Flow Logs from ADLS
+  task {
+    task_key = "ingest"
+
+    notebook_task {
+      notebook_path   = databricks_notebook.azure_vnet_flow.path
+      base_parameters = local.common_params
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 2: Gold alerts — same notebook as AWS VPC Flow (OCSF-normalized)
+  task {
+    task_key = "gold_alerts"
+
+    depends_on {
+      task_key = "ingest"
+    }
+
+    notebook_task {
+      notebook_path = databricks_notebook.gold_alerts.path
+      base_parameters = {
+        bootstrap_lookback_days = "1"
+      }
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 3: Alert forwarding — CDF-based SNS publish
+  task {
+    task_key = "forward_alerts"
+
+    depends_on {
+      task_key = "gold_alerts"
+    }
+
+    notebook_task {
+      notebook_path   = databricks_notebook.gold_alerts_forward.path
+      base_parameters = {}
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 0/10 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    phase       = "bronze-gold-forward"
+    data_source = "vnet_flow"
+    cloud       = "azure"
   }
 }

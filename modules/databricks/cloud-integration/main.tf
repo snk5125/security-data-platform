@@ -1,15 +1,17 @@
 # -----------------------------------------------------------------------------
-# Cloud Integration Module — Databricks ↔ AWS
+# Cloud Integration Module — Databricks ↔ AWS + Azure
 # -----------------------------------------------------------------------------
-# Connects Databricks Unity Catalog to AWS by creating:
+# Connects Databricks Unity Catalog to AWS (and optionally Azure) by creating:
 #
 #   1. Storage credential (hub)     — wraps the hub IAM role for cross-account
 #                                     access to security log buckets
 #   2. Storage credential (managed) — wraps the managed storage role for Delta
 #                                     table read/write
 #   3. External locations (workloads)  — one per workload alias via for_each,
-#                                        s3://{workload-security-logs}/
-#   4. External location (managed)    — s3://{managed-storage-bucket}/
+#                                        uses storage.url from workload manifest
+#   4. Storage credential (azure)   — wraps an Entra ID service principal for
+#                                      ADLS Gen2 access (conditional on Azure workloads)
+#   5. External location (managed)    — s3://{managed-storage-bucket}/
 #   6. Grants on hub credential     — READ_FILES for account users
 #   7. Grants on managed credential — READ_FILES + WRITE_FILES for account users
 #
@@ -27,7 +29,7 @@
 #   - Output the external IDs assigned by Databricks
 #   - Feed them back into terraform.tfvars for Phase 5.5 trust policy update
 #
-# Resources created: 5 + (1 per workload in var.workloads)
+# Resources created: 5 + (1 per workload in var.workloads) + (1 if Azure workloads exist)
 # -----------------------------------------------------------------------------
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -85,13 +87,18 @@ resource "databricks_storage_credential" "managed" {
 resource "databricks_external_location" "workload" {
   for_each = { for w in var.workloads : w.alias => w }
 
-  name            = "security-logs-${each.key}"
-  url             = "s3://${each.value.storage.bucket_name}/"
-  credential_name = databricks_storage_credential.hub.name
+  name = "security-logs-${each.key}"
+  url  = each.value.storage.url
+  # Select credential by cloud type: AWS workloads use the hub IAM role chain;
+  # Azure workloads use the Entra ID service principal credential.
+  credential_name = each.value.cloud == "aws" ? databricks_storage_credential.hub.name : databricks_storage_credential.azure[0].name
   read_only       = true
   comment         = "Security logs for ${each.key} (${each.value.cloud})"
 
-  depends_on = [databricks_storage_credential.hub]
+  depends_on = [
+    databricks_storage_credential.hub,
+    databricks_storage_credential.azure,
+  ]
 }
 
 # Managed storage — Databricks writes managed Delta tables here. This is the
@@ -132,5 +139,35 @@ resource "databricks_grants" "managed_credential" {
   grant {
     principal  = "account users"
     privileges = ["READ_FILES", "WRITE_FILES"]
+  }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 4. AZURE STORAGE CREDENTIAL (conditional)
+# ═════════════════════════════════════════════════════════════════════════════
+# Created only when Azure workloads exist. Uses an Entra ID service principal
+# to authenticate Databricks to Azure ADLS Gen2 storage accounts. This is a
+# third credential — completely separate from the AWS hub and managed credentials.
+
+resource "databricks_storage_credential" "azure" {
+  count = var.azure_credentials != null ? 1 : 0
+  name  = "lakehouse-azure-credential"
+
+  azure_service_principal {
+    directory_id   = var.azure_credentials.directory_id
+    application_id = var.azure_credentials.application_id
+    client_secret  = var.azure_credentials.client_secret
+  }
+
+  comment = "Azure service principal credential for ADLS Gen2 security log access"
+}
+
+resource "databricks_grants" "azure_credential" {
+  count              = var.azure_credentials != null ? 1 : 0
+  storage_credential = databricks_storage_credential.azure[0].id
+
+  grant {
+    principal  = "account users"
+    privileges = ["READ_FILES"]
   }
 }

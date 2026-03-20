@@ -39,3 +39,8 @@ output "managed_external_location_url" {
   description = "S3 URL for managed storage external location"
   value       = databricks_external_location.managed.url
 }
+
+output "azure_credential_name" {
+  description = "Name of the Azure storage credential (empty string if no Azure workloads)"
+  value       = var.azure_credentials != null ? databricks_storage_credential.azure[0].name : ""
+}

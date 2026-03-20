@@ -11,6 +11,7 @@ output "workload_manifest" {
     region     = var.aws_region
     storage = {
       type        = "s3"
+      url         = "s3://${module.data_sources.security_logs_bucket_name}/"
       bucket_name = module.data_sources.security_logs_bucket_name
       bucket_arn  = module.data_sources.security_logs_bucket_arn
     }

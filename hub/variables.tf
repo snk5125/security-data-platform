@@ -55,29 +55,43 @@ variable "sns_publisher_secret_access_key" {
 }
 
 # Workload manifests — populated by assemble-workloads.sh.
+# AWS workloads populate all fields. Azure workloads omit read_only_role_arn,
+# bucket_name, bucket_arn, and encryption — they default to empty/none values.
 variable "workloads" {
-  description = "List of workload manifests from assemble-workloads.sh."
+  description = "List of workload manifests from assemble-workloads.sh. Supports AWS and Azure workloads."
   type = list(object({
-    cloud      = string
-    account_id = string
+    cloud      = string # "aws" or "azure"
+    account_id = string # AWS account ID or Azure subscription ID
     alias      = string
     region     = string
     storage = object({
-      type        = string
-      bucket_name = string
-      bucket_arn  = string
+      type        = string               # "s3" or "adls"
+      url         = optional(string, "") # "s3://bucket/" or "abfss://container@account.dfs.core.windows.net/"
+      bucket_name = optional(string, "")
+      bucket_arn  = optional(string, "")
     })
-    read_only_role_arn = string
-    encryption = object({
+    read_only_role_arn = optional(string, "")
+    encryption = optional(object({
       type    = string
       key_arn = string
-    })
+    }), { type = "none", key_arn = "" })
     data_products = map(object({
       format      = string
       path_prefix = string
     }))
   }))
   default = []
+}
+
+variable "azure_credentials" {
+  description = "Azure service principal credentials for ADLS access via Databricks. Null if no Azure workloads exist."
+  type = object({
+    directory_id   = string
+    application_id = string
+    client_secret  = string
+  })
+  default   = null
+  sensitive = true
 }
 
 variable "catalog_name" {

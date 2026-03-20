@@ -21,15 +21,39 @@ variable "managed_storage_bucket_name" {
 }
 
 variable "workloads" {
-  description = "List of workload manifests from assemble-workloads.sh. Each entry describes one workload's storage and data products."
+  description = "List of workload manifests. Each entry describes one workload's cloud type, storage location, and access configuration."
+  # Full type accepted for consistency with hub root, even if the module only
+  # currently consumes alias, cloud, storage, and read_only_role_arn.
   type = list(object({
-    alias = string
-    cloud = string
+    cloud      = string
+    account_id = string
+    alias      = string
+    region     = string
     storage = object({
       type        = string
-      bucket_name = string
-      bucket_arn  = string
+      url         = optional(string, "") # "s3://bucket/" or "abfss://.../" — optional for backward compat
+      bucket_name = optional(string, "")
+      bucket_arn  = optional(string, "")
     })
-    read_only_role_arn = string
+    read_only_role_arn = optional(string, "")
+    encryption = optional(object({
+      type    = string
+      key_arn = string
+    }), { type = "none", key_arn = "" })
+    data_products = map(object({
+      format      = string
+      path_prefix = string
+    }))
   }))
+}
+
+variable "azure_credentials" {
+  description = "Azure service principal for ADLS access. Null if no Azure workloads."
+  type = object({
+    directory_id   = string
+    application_id = string
+    client_secret  = string
+  })
+  default   = null
+  sensitive = true
 }

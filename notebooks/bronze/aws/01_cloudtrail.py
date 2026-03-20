@@ -19,9 +19,9 @@
 # OCSF version: 1.1.0
 #
 # Parameters (passed via job or widgets):
-#   - workload_a_bucket: S3 bucket name for workload account A
-#   - workload_b_bucket: S3 bucket name for workload account B
-#   - checkpoint_base:   S3 path for Auto Loader checkpoints
+#   - workload_a_storage_url: Storage URL for workload account A (e.g. s3://bucket/)
+#   - workload_b_storage_url: Storage URL for workload account B (e.g. s3://bucket/)
+#   - checkpoint_base:        S3 path for Auto Loader checkpoints
 # -----------------------------------------------------------------------------
 
 # COMMAND ----------
@@ -30,22 +30,23 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("workload_a_bucket", "", "Workload A Bucket")
-dbutils.widgets.text("workload_b_bucket", "", "Workload B Bucket")
+dbutils.widgets.text("workload_a_storage_url", "", "Workload A Storage URL")
+dbutils.widgets.text("workload_b_storage_url", "", "Workload B Storage URL")
 dbutils.widgets.text("checkpoint_base", "", "Checkpoint Base Path")
 
-workload_a_bucket = dbutils.widgets.get("workload_a_bucket")
-workload_b_bucket = dbutils.widgets.get("workload_b_bucket")
+workload_a_storage_url = dbutils.widgets.get("workload_a_storage_url")
+workload_b_storage_url = dbutils.widgets.get("workload_b_storage_url")
 checkpoint_base = dbutils.widgets.get("checkpoint_base")
 
 # COMMAND ----------
 
 # Source paths — one per workload account. CloudTrail writes JSON files under
 # the cloudtrail/AWSLogs/ prefix. Auto Loader recursively discovers all .json.gz
-# files under these paths.
+# files under these paths. storage_url already includes the scheme and trailing
+# slash (e.g. "s3://bucket/"), so path suffixes are appended directly.
 source_paths = {
-    "workload_a": f"s3://{workload_a_bucket}/cloudtrail/AWSLogs/",
-    "workload_b": f"s3://{workload_b_bucket}/cloudtrail/AWSLogs/",
+    "workload_a": f"{workload_a_storage_url}cloudtrail/AWSLogs/",
+    "workload_b": f"{workload_b_storage_url}cloudtrail/AWSLogs/",
 }
 
 checkpoint_base_ct = f"{checkpoint_base}/cloudtrail"
