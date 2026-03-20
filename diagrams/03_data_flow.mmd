@@ -7,17 +7,23 @@ graph LR
     end
 
     %% ── Workload account S3 log buckets ──────────────────────────────────────
-    subgraph "Workload A (<WORKLOAD_A_ACCOUNT_ID>)"
+    subgraph "AWS Workload A (<WORKLOAD_A_ACCOUNT_ID>)"
         S3A["S3 Bucket<br/>lakehouse-workload-a-security-logs"]
     end
 
-    subgraph "Workload B (<WORKLOAD_B_ACCOUNT_ID>)"
+    subgraph "AWS Workload B (<WORKLOAD_B_ACCOUNT_ID>)"
         S3B["S3 Bucket<br/>lakehouse-workload-b-security-logs"]
+    end
+
+    %% ── Azure workload ADLS storage ──────────────────────────────────────────
+    subgraph "Azure Workload A (3bd01bbf-...)"
+        ADLSA["ADLS Gen2<br/><AZURE_LOGS_STORAGE_ACCOUNT>"]
     end
 
     %% ── Ingestion layer ──────────────────────────────────────────────────────
     subgraph INGEST ["Ingestion"]
         AL["Auto Loader<br/>cloudFiles · availableNow<br/>directory listing mode"]
+        ALAZ["Auto Loader<br/>cloudFiles · ADLS Gen2<br/>directory listing mode"]
         TI_FETCH["HTTP Fetch<br/>01_bronze_ingest<br/>daily · OCSF formatted"]
     end
 
@@ -27,6 +33,8 @@ graph LR
         VF["vpc_flow_raw<br/>(OCSF network activity)"]
         GD["guardduty_raw"]
         CF["config_raw"]
+        AZACT["activity_log_raw<br/>(OCSF — Azure Activity Log)"]
+        AZVF["azure_vnet_flow_raw<br/>(OCSF network activity)"]
         TIR["threat_intel_raw<br/>IOC feed rows · 14-day TTL"]
     end
 
@@ -39,7 +47,7 @@ graph LR
     %% ── Gold Delta tables (correlated detections + inventory) ────────────────
     subgraph "Gold Delta Tables"
         EC2["ec2_inventory<br/>Current-state per instance<br/>ENIs, volumes, SGs joined"]
-        ALERTS["alerts<br/>vpc_flow × threat_intel joins<br/>MERGE on alert_id"]
+        ALERTS["alerts<br/>vpc_flow + azure_vnet_flow<br/>× threat_intel joins<br/>MERGE on alert_id"]
         AFWD["alerts_forwarded<br/>CDF version watermark<br/>dedup + delivery tracking"]
     end
 
@@ -50,10 +58,16 @@ graph LR
 
     %% ── S3 log path labels ───────────────────────────────────────────────────
     subgraph "S3 Paths"
-        P1["cloudtrail/AWSLogs/ - JSON.gz"]
-        P2["vpc-flow-logs/AWSLogs/ - text.gz"]
-        P3["AWSLogs/.../GuardDuty/ - JSONL.gz"]
-        P4["config/AWSLogs/ - JSON.gz"]
+        P1["cloudtrail/AWSLogs/ → JSON.gz"]
+        P2["vpc-flow-logs/AWSLogs/ → text.gz"]
+        P3["AWSLogs/.../GuardDuty/ → JSONL.gz"]
+        P4["config/AWSLogs/ → JSON.gz"]
+    end
+
+    %% ── ADLS log path labels ────────────────────────────────────────────────
+    subgraph "ADLS Paths"
+        PA1["insights-activity-logs/ → JSON"]
+        PA2["vnet-flow-logs/ → JSON (deferred)"]
     end
 
     %% ── Edges: workload S3 → Auto Loader → bronze ───────────────────────────
@@ -63,6 +77,11 @@ graph LR
     P2 --> AL --> VF
     P3 --> AL --> GD
     P4 --> AL --> CF
+
+    %% ── Edges: Azure ADLS → Auto Loader → bronze ────────────────────────────
+    ADLSA --> PA1 & PA2
+    PA1 --> ALAZ --> AZACT
+    PA2 -.->|"deferred"| ALAZ -.-> AZVF
 
     %% ── Edges: TI feeds → bronze ─────────────────────────────────────────────
     FEODO & ET & IPSUM --> TI_FETCH --> TIR
@@ -74,8 +93,8 @@ graph LR
     %% ── Edges: bronze → silver (TI pipeline, daily MERGE on ioc_id) ─────────
     TIR -->|"MERGE on ioc_id<br/>daily"| TIN
 
-    %% ── Edges: silver + bronze → gold (VPC flow ingest, every 10 min) ───────
-    VF & TIN -->|"watermark join<br/>10-min incremental<br/>MERGE on alert_id"| ALERTS
+    %% ── Edges: silver + bronze → gold (flow ingest, every 10 min) ───────────
+    VF & AZVF & TIN -->|"watermark join<br/>10-min incremental<br/>MERGE on alert_id"| ALERTS
 
     %% ── Playbooks ────────────────────────────────────────────────────────────
     subgraph PLAYBOOKS ["Playbooks (docs/playbooks/)"]

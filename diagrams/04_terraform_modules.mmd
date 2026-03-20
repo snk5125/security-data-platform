@@ -1,28 +1,34 @@
 graph TD
     BOOT["<b>bootstrap/</b><br/>(local state)<br/>S3 state bucket · DynamoDB lock table"]
 
-    FOUND["<b>foundations/aws-security/</b><br/>module.security_foundation<br/>Managed S3 bucket · SNS topic · IAM publisher"]
+    FOUNDA["<b>foundations/aws-security/</b><br/>module.security_foundation<br/>Managed S3 bucket · SNS topic · IAM publisher"]
+
+    FOUNDAZ["<b>foundations/azure-security/</b><br/>module.security_foundation<br/>Entra ID SP · ADLS managed storage"]
 
     WKA["<b>workloads/aws-workload-a/</b><br/>module.baseline + module.data_sources<br/>VPC · EC2 · CloudTrail · VPC Flow<br/>GuardDuty · Config · S3 · KMS · IAM"]
 
     WKB["<b>workloads/aws-workload-b/</b><br/>module.baseline + module.data_sources<br/>VPC · EC2 · CloudTrail · VPC Flow<br/>GuardDuty · Config · S3 · KMS · IAM"]
+
+    WKAZA["<b>workloads/azure-workload-a/</b><br/>module.baseline + module.data_sources<br/>VNet · VMs · Activity Log<br/>ADLS security logs · SP role assignment"]
 
     ASM["<b>scripts/assemble-workloads.sh</b><br/>Collects workload_manifest outputs →<br/>hub/workloads.auto.tfvars.json"]
 
     subgraph HUB ["hub/ (Databricks integration layer)"]
         direction TB
         IAM["iam.tf<br/>lakehouse-hub-role<br/>lakehouse-managed-storage-role"]
-        CI["module.cloud_integration<br/>Storage creds · external locations<br/>(for_each over workloads)"]
+        CI["module.cloud_integration<br/>3 storage creds (hub + managed + azure)<br/>4 external locations (for_each over workloads)"]
         UC["module.unity_catalog<br/>Catalog · schemas · grants"]
         WC["module.workspace_config<br/>Cluster policy"]
-        JOBS["module.jobs<br/>12 notebooks · 4 directories<br/>5 jobs · secret scope + secrets"]
+        JOBS["module.jobs<br/>15 notebooks · 5 directories<br/>7 jobs · secret scope + secrets"]
         CI --> IAM
         CI --> UC
         UC --> WC
         WC --> JOBS
     end
 
-    BOOT -->|"S3 backend"| FOUND
-    FOUND -->|"managed S3 exists"| WKA & WKB
-    WKA & WKB -->|"terraform output"| ASM
+    BOOT -->|"S3 backend"| FOUNDA
+    BOOT -->|"S3 backend"| FOUNDAZ
+    FOUNDA -->|"managed S3 exists"| WKA & WKB
+    FOUNDAZ -->|"SP ID for role<br/>assignments"| WKAZA
+    WKA & WKB & WKAZA -->|"terraform output"| ASM
     ASM -->|"workloads.auto.tfvars.json"| CI

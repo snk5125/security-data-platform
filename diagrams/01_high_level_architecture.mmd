@@ -1,11 +1,13 @@
-graph TD
+graph TB
     classDef awsBox fill:#FF9900,color:#fff,stroke:#232F3E,stroke-width:2px
+    classDef azureBox fill:#0078D4,color:#fff,stroke:#003A6C,stroke-width:2px
     classDef dbxBox fill:#FF3621,color:#fff,stroke:#8B0000,stroke-width:2px
     classDef s3Box fill:#3F8624,color:#fff,stroke:#2E6B1A,stroke-width:2px
     classDef iamBox fill:#DD344C,color:#fff,stroke:#8B0000,stroke-width:2px
     classDef ec2Box fill:#ED7100,color:#fff,stroke:#9B4B00,stroke-width:2px
     classDef kmsBox fill:#DD344C,color:#fff,stroke:#8B0000,stroke-width:2px
     classDef dataBox fill:#8C4FFF,color:#fff,stroke:#5A2D9E,stroke-width:2px
+    classDef adlsBox fill:#0078D4,color:#fff,stroke:#003A6C,stroke-width:2px
 
     %% ═══════════════════════════════════════════════════════
     %% DATABRICKS LAYER
@@ -24,24 +26,32 @@ graph TD
             DW["Serverless Starter Warehouse"]
         end
 
-        subgraph JOBS ["Scheduled Jobs (5 Jobs, PAUSED)"]
+        subgraph JOBS ["Scheduled Jobs (7 Jobs, PAUSED)"]
             direction TB
             J1["CloudTrail<br/>1 task · 15 min"]
             J2["bronze-vpc-flow-ingest<br/>3 tasks · 10 min<br/>ingest → gold_alerts → forward_alerts"]
             J3["GuardDuty<br/>1 task · 6 hr"]
             J4["Config Pipeline<br/>3 tasks · 24 hr<br/>bronze → silver CDC → gold EC2"]
             J5["Threat Intel Pipeline<br/>2 tasks · daily 01:00 UTC<br/>bronze_ingest → silver_network"]
+            J6["Activity Log<br/>1 task · 15 min"]
+            J7["Azure VNet Flow<br/>3 tasks · 10 min<br/>ingest → gold_alerts → forward_alerts"]
         end
 
-        subgraph NOTEBOOKS ["Notebooks (12)"]
+        subgraph NOTEBOOKS ["Notebooks (15)"]
             direction TB
-            subgraph NB_BRONZE ["Bronze (5)"]
+            subgraph NB_BRONZE ["Bronze/AWS (5)"]
                 direction LR
                 NB0["00_ocsf_common"]
                 NB1["01_cloudtrail"]
                 NB2["02_vpc_flow"]
                 NB3["03_guardduty"]
                 NB4["04_config"]
+            end
+            subgraph NB_AZ_BRONZE ["Bronze/Azure (3)"]
+                direction LR
+                NBA0["00_azure_common"]
+                NBA1["01_activity_log"]
+                NBA2["02_vnet_flow"]
             end
             subgraph NB_TI ["Threat Intel (3)"]
                 direction LR
@@ -63,6 +73,7 @@ graph TD
             direction LR
             HC["hub-credential → security-logs-workload-a, security-logs-workload-b"]
             MC["managed-credential → managed-storage"]
+            AZC["azure-credential → security-logs-azure-workload-a"]
         end
     end
 
@@ -94,7 +105,16 @@ graph TD
     end
 
     %% ═══════════════════════════════════════════════════════
-    %% WORKLOAD A
+    %% AZURE FOUNDATION
+    %% ═══════════════════════════════════════════════════════
+    subgraph AZFOUND ["AZURE FOUNDATION — Entra ID + Managed Storage"]
+        direction LR
+        AZSP["Entra ID Service Principal<br/>lakehouse-databricks-sp"]
+        AZMGD["ADLS Gen2: <AZURE_MANAGED_STORAGE_ACCOUNT><br/>Managed storage (future use)"]
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% WORKLOAD A (AWS)
     %% ═══════════════════════════════════════════════════════
     subgraph WKA ["AWS WORKLOAD ACCOUNT A — <WORKLOAD_A_ACCOUNT_ID>"]
         direction LR
@@ -123,7 +143,7 @@ graph TD
     end
 
     %% ═══════════════════════════════════════════════════════
-    %% WORKLOAD B
+    %% WORKLOAD B (AWS)
     %% ═══════════════════════════════════════════════════════
     subgraph WKB ["AWS WORKLOAD ACCOUNT B — <WORKLOAD_B_ACCOUNT_ID>"]
         direction LR
@@ -152,11 +172,44 @@ graph TD
     end
 
     %% ═══════════════════════════════════════════════════════
+    %% AZURE WORKLOAD A
+    %% ═══════════════════════════════════════════════════════
+    subgraph WKAZA ["AZURE WORKLOAD A — 3bd01bbf-6efb-..."]
+        direction LR
+
+        subgraph NET_AZ ["VNet 10.10.0.0/16 — Subnet 10.10.1.0/24"]
+            direction LR
+            VMAZL["Linux Standard_D2als_v7<br/>Ubuntu 22.04"]
+            VMAZW["Windows Standard_D2als_v7<br/>Server 2022"]
+            NSGAZ["NSG: 0.0.0.0/0<br/>:22, :3389 inbound"]
+        end
+
+        subgraph DATA_AZ ["Data Sources"]
+            direction LR
+            AZAL["Activity Log"]
+            AZVFL["VNet Flow Logs<br/>(deferred — azurerm v4)"]
+        end
+
+        subgraph STORE_AZ ["Storage"]
+            direction TB
+            ADLSAZ["ADLS Gen2: <AZURE_LOGS_STORAGE_ACCOUNT><br/>Containers: security-logs, vnet-flow-logs"]
+            SPRA["SP: Storage Blob Data Reader"]
+        end
+    end
+
+    %% ═══════════════════════════════════════════════════════
     %% EDGES: Databricks → Security Account (IAM chain)
     %% ═══════════════════════════════════════════════════════
     HC -.->|"sts:AssumeRole<br/>(ExternalID: ede6...)"| HUB
     MC -.->|"sts:AssumeRole<br/>(ExternalID: ede6...)"| MSR
     MSR -.->|"S3 read/write"| MSB
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: Databricks → Azure (Entra ID)
+    %% ═══════════════════════════════════════════════════════
+    AZC -.->|"Entra ID auth"| AZSP
+    AZSP -.->|"Storage Blob<br/>Data Reader"| ADLSAZ
+    AZSP -.->|"Storage Blob<br/>Data Contributor"| AZMGD
 
     %% ═══════════════════════════════════════════════════════
     %% EDGES: Security Account → Workload Accounts (chain-assume)
@@ -169,15 +222,17 @@ graph TD
     HUB -.->|"kms:Decrypt"| KMSB
 
     %% ═══════════════════════════════════════════════════════
-    %% EDGES: EC2 → Data Sources (telemetry generation)
+    %% EDGES: EC2/VMs → Data Sources (telemetry generation)
     %% ═══════════════════════════════════════════════════════
     EC2AL -.-> DATA_A
     EC2AW -.-> DATA_A
     EC2BL -.-> DATA_B
     EC2BW -.-> DATA_B
+    VMAZL -.-> DATA_AZ
+    VMAZW -.-> DATA_AZ
 
     %% ═══════════════════════════════════════════════════════
-    %% EDGES: Data Sources → S3 (log delivery)
+    %% EDGES: Data Sources → Storage (log delivery)
     %% ═══════════════════════════════════════════════════════
     CTA -->|"JSON.gz"| S3A
     FLA -->|"text.gz"| S3A
@@ -188,6 +243,9 @@ graph TD
     FLB -->|"text.gz"| S3B
     GDB -->|"JSONL.gz<br/>(KMS encrypted)"| S3B
     CFB -->|"JSON.gz"| S3B
+
+    AZAL -->|"JSON"| ADLSAZ
+    AZVFL -.->|"deferred"| ADLSAZ
 
     %% ═══════════════════════════════════════════════════════
     %% EDGES: Jobs → Notebooks
@@ -202,14 +260,19 @@ graph TD
     J4 -->|"daily"| NB6
     J5 -->|"daily"| NB_TI1
     J5 -->|"daily"| NB_TI2
+    J6 -->|"15 min"| NBA1
+    J7 -->|"10 min"| NBA2
+    J7 -->|"10 min"| NB7
+    J7 -->|"10 min"| NB8
 
     %% ═══════════════════════════════════════════════════════
-    %% EDGES: Threat intel forward → SNS
+    %% EDGES: Alert forwarding → SNS
     %% ═══════════════════════════════════════════════════════
     NB8 -->|"sns:Publish<br/>per new alert"| SNS
     SNSU -.->|"credentials<br/>(dbutils.secrets)"| NB8
 
     %% ═══════════════════════════════════════════════════════
-    %% EDGES: Jobs read from S3 via external locations
+    %% EDGES: Jobs read from storage via external locations
     %% ═══════════════════════════════════════════════════════
     J1 & J2 & J3 & J4 -->|"Auto Loader<br/>cloudFiles"| CREDS
+    J6 & J7 -->|"Auto Loader<br/>cloudFiles (ADLS)"| CREDS

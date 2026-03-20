@@ -1,25 +1,38 @@
 graph LR
-    UCM["Databricks UC Master Role<br/>arn:aws:iam::<DATABRICKS_AWS_ACCOUNT_ID>:role/<br/>unity-catalog-prod-UCMasterRole-..."]
+    subgraph "AWS IAM Role Chain"
+        UCM["Databricks UC Master Role<br/>arn:aws:iam::<DATABRICKS_AWS_ACCOUNT_ID>:role/<br/>unity-catalog-prod-UCMasterRole-..."]
 
-    HUB["lakehouse-hub-role<br/>(<SECURITY_ACCOUNT_ID>)"]
-    MSR["lakehouse-managed-storage-role<br/>(<SECURITY_ACCOUNT_ID>)"]
-    ROA["lakehouse-workload-a-read-only-role<br/>(<WORKLOAD_A_ACCOUNT_ID>)"]
-    ROB["lakehouse-workload-b-read-only-role<br/>(<WORKLOAD_B_ACCOUNT_ID>)"]
+        HUB["lakehouse-hub-role<br/>(<SECURITY_ACCOUNT_ID>)"]
+        MSR["lakehouse-managed-storage-role<br/>(<SECURITY_ACCOUNT_ID>)"]
+        ROA["lakehouse-workload-a-read-only-role<br/>(<WORKLOAD_A_ACCOUNT_ID>)"]
+        ROB["lakehouse-workload-b-read-only-role<br/>(<WORKLOAD_B_ACCOUNT_ID>)"]
 
-    S3A["S3: workload-a-security-logs"]
-    S3B["S3: workload-b-security-logs"]
-    S3M["S3: managed-storage"]
-    KMSA["KMS Key A"]
-    KMSB["KMS Key B"]
+        S3A["S3: workload-a-security-logs"]
+        S3B["S3: workload-b-security-logs"]
+        S3M["S3: managed-storage"]
+        KMSA["KMS Key A"]
+        KMSB["KMS Key B"]
 
-    UCM -->|"AssumeRole<br/>ExternalID: ede6..."| HUB
-    UCM -->|"AssumeRole<br/>ExternalID: ede6..."| MSR
-    HUB -->|"self-assume"| HUB
-    MSR -->|"self-assume"| MSR
-    HUB -->|"AssumeRole<br/>(org-scoped)"| ROA
-    HUB -->|"AssumeRole<br/>(org-scoped)"| ROB
-    ROA -->|"s3:GetObject<br/>s3:ListBucket"| S3A
-    ROB -->|"s3:GetObject<br/>s3:ListBucket"| S3B
-    MSR -->|"s3:GetObject<br/>s3:PutObject<br/>s3:DeleteObject"| S3M
-    HUB -->|"kms:Decrypt"| KMSA
-    HUB -->|"kms:Decrypt"| KMSB
+        UCM -->|"AssumeRole<br/>ExternalID: ede6..."| HUB
+        UCM -->|"AssumeRole<br/>ExternalID: ede6..."| MSR
+        HUB -->|"self-assume"| HUB
+        MSR -->|"self-assume"| MSR
+        HUB -->|"AssumeRole<br/>(org-scoped)"| ROA
+        HUB -->|"AssumeRole<br/>(org-scoped)"| ROB
+        ROA -->|"s3:GetObject<br/>s3:ListBucket"| S3A
+        ROB -->|"s3:GetObject<br/>s3:ListBucket"| S3B
+        MSR -->|"s3:GetObject<br/>s3:PutObject<br/>s3:DeleteObject"| S3M
+        HUB -->|"kms:Decrypt"| KMSA
+        HUB -->|"kms:Decrypt"| KMSB
+    end
+
+    subgraph "Azure Entra ID Service Principal"
+        AZCRED["lakehouse-azure-credential<br/>(Databricks storage credential)"]
+        AZSP["Entra ID SP:<br/>lakehouse-databricks-sp<br/>(directory_id + application_id<br/>+ client_secret)"]
+        ADLSWK["ADLS Gen2:<br/><AZURE_LOGS_STORAGE_ACCOUNT><br/>(workload-a security logs)"]
+        ADLSMGD["ADLS Gen2:<br/><AZURE_MANAGED_STORAGE_ACCOUNT><br/>(managed storage — future)"]
+
+        AZCRED -->|"azure_service_principal<br/>auth"| AZSP
+        AZSP -->|"Storage Blob<br/>Data Reader"| ADLSWK
+        AZSP -->|"Storage Blob<br/>Data Contributor"| ADLSMGD
+    end
