@@ -26,7 +26,7 @@ graph TB
             DW["Serverless Starter Warehouse"]
         end
 
-        subgraph JOBS ["Scheduled Jobs (7 Jobs, PAUSED)"]
+        subgraph JOBS ["Scheduled Jobs (11 Jobs, PAUSED)"]
             direction TB
             J1["CloudTrail<br/>1 task · 15 min"]
             J2["bronze-vpc-flow-ingest<br/>3 tasks · 10 min<br/>ingest → gold_alerts → forward_alerts"]
@@ -35,9 +35,13 @@ graph TB
             J5["Threat Intel Pipeline<br/>2 tasks · daily 01:00 UTC<br/>bronze_ingest → silver_network"]
             J6["Activity Log<br/>1 task · 15 min"]
             J7["Azure VNet Flow<br/>3 tasks · 10 min<br/>ingest → gold_alerts → forward_alerts"]
+            J8["GCP Audit Logs<br/>1 task · 15 min"]
+            J9["GCP VPC Flow<br/>3 tasks · 10 min<br/>ingest → gold_alerts → forward_alerts"]
+            J10["GCP Asset Inventory<br/>1 task · 24 hr"]
+            J11["GCP SCC Findings<br/>1 task · 6 hr"]
         end
 
-        subgraph NOTEBOOKS ["Notebooks (15)"]
+        subgraph NOTEBOOKS ["Notebooks (20)"]
             direction TB
             subgraph NB_BRONZE ["Bronze/AWS (5)"]
                 direction LR
@@ -52,6 +56,14 @@ graph TB
                 NBA0["00_azure_common"]
                 NBA1["01_activity_log"]
                 NBA2["02_vnet_flow"]
+            end
+            subgraph NB_GCP_BRONZE ["Bronze/GCP (5)"]
+                direction LR
+                NBG0["00_gcp_common"]
+                NBG1["01_cloud_audit_logs"]
+                NBG2["02_vpc_flow_logs"]
+                NBG3["03_asset_inventory"]
+                NBG4["04_scc_findings"]
             end
             subgraph NB_TI ["Threat Intel (3)"]
                 direction LR
@@ -73,7 +85,8 @@ graph TB
             direction LR
             HC["hub-credential → security-logs-workload-a, security-logs-workload-b"]
             MC["managed-credential → managed-storage"]
-            AZC["azure-credential → security-logs-azure-workload-a"]
+            AZC["azure-credential → activity-logs-azure-workload-a, flow-logs-azure-workload-a"]
+            GCPCRED["gcp-credential → security-logs-gcp-workload-a"]
         end
     end
 
@@ -187,13 +200,50 @@ graph TB
         subgraph DATA_AZ ["Data Sources"]
             direction LR
             AZAL["Activity Log"]
-            AZVFL["VNet Flow Logs<br/>(deferred — azurerm v4)"]
+            AZVFL["VNet Flow Logs<br/>(azurerm v4)"]
         end
 
         subgraph STORE_AZ ["Storage"]
             direction TB
-            ADLSAZ["ADLS Gen2: <AZURE_LOGS_STORAGE_ACCOUNT><br/>Containers: security-logs, vnet-flow-logs"]
+            ADLSAZ["ADLS Gen2: <AZURE_LOGS_STORAGE_ACCOUNT><br/>Containers: insights-activity-logs,<br/>insights-logs-flowlogflowevent"]
             SPRA["SP: Storage Blob Data Reader"]
+        end
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% GCP FOUNDATION
+    %% ═══════════════════════════════════════════════════════
+    subgraph GCPFOUND ["GCP FOUNDATION — Service Account"]
+        direction LR
+        GCPSA["GCP Service Account<br/>lakehouse-databricks-sa"]
+        GCPMGD["GCS: lakehouse-managed<br/>Managed storage (future use)"]
+    end
+
+    %% ═══════════════════════════════════════════════════════
+    %% GCP WORKLOAD A
+    %% ═══════════════════════════════════════════════════════
+    subgraph WKGCPA ["GCP WORKLOAD A"]
+        direction LR
+
+        subgraph NET_GCP ["VPC 10.20.0.0/16 — Subnet 10.20.1.0/24"]
+            direction LR
+            VMGCPL["Linux e2-micro<br/>Ubuntu 22.04"]
+            VMGCPW["Windows e2-medium<br/>Server 2022"]
+            FWGCP["Firewall: 0.0.0.0/0<br/>:22, :3389 inbound"]
+        end
+
+        subgraph DATA_GCP ["Data Sources"]
+            direction LR
+            GCPAUDIT["Cloud Audit Logs"]
+            GCPFLOW["VPC Flow Logs"]
+            GCPASSET["Cloud Asset Inventory"]
+            GCPSCC["SCC Findings"]
+        end
+
+        subgraph STORE_GCP ["Storage"]
+            direction TB
+            GCSGCP["GCS: security-logs<br/>Prefixes: audit-logs/, vpc-flow-logs/, asset-inventory/"]
+            GCPRO["SA: objectViewer"]
         end
     end
 
@@ -210,6 +260,16 @@ graph TB
     AZC -.->|"Entra ID auth"| AZSP
     AZSP -.->|"Storage Blob<br/>Data Reader"| ADLSAZ
     AZSP -.->|"Storage Blob<br/>Data Contributor"| AZMGD
+
+    %% Two external locations for Azure workload-a (one per system-managed container)
+    %% activity-logs-azure-workload-a → insights-activity-logs container
+    %% flow-logs-azure-workload-a → insights-logs-flowlogflowevent container
+
+    %% ═══════════════════════════════════════════════════════
+    %% EDGES: Databricks → GCP (SA Key)
+    %% ═══════════════════════════════════════════════════════
+    GCPCRED -.->|"SA Key auth"| GCPSA
+    GCPSA -.->|"objectViewer"| GCSGCP
 
     %% ═══════════════════════════════════════════════════════
     %% EDGES: Security Account → Workload Accounts (chain-assume)
@@ -230,6 +290,8 @@ graph TB
     EC2BW -.-> DATA_B
     VMAZL -.-> DATA_AZ
     VMAZW -.-> DATA_AZ
+    VMGCPL -.-> DATA_GCP
+    VMGCPW -.-> DATA_GCP
 
     %% ═══════════════════════════════════════════════════════
     %% EDGES: Data Sources → Storage (log delivery)
@@ -245,7 +307,12 @@ graph TB
     CFB -->|"JSON.gz"| S3B
 
     AZAL -->|"JSON"| ADLSAZ
-    AZVFL -.->|"deferred"| ADLSAZ
+    AZVFL -->|"JSON"| ADLSAZ
+
+    GCPAUDIT -->|"JSON"| GCSGCP
+    GCPFLOW -->|"JSON"| GCSGCP
+    GCPASSET -->|"JSON"| GCSGCP
+    GCPSCC -->|"JSON"| GCSGCP
 
     %% ═══════════════════════════════════════════════════════
     %% EDGES: Jobs → Notebooks
@@ -264,6 +331,12 @@ graph TB
     J7 -->|"10 min"| NBA2
     J7 -->|"10 min"| NB7
     J7 -->|"10 min"| NB8
+    J8 -->|"15 min"| NBG1
+    J9 -->|"10 min"| NBG2
+    J9 -->|"10 min"| NB7
+    J9 -->|"10 min"| NB8
+    J10 -->|"daily"| NBG3
+    J11 -->|"6 hr"| NBG4
 
     %% ═══════════════════════════════════════════════════════
     %% EDGES: Alert forwarding → SNS
@@ -276,3 +349,4 @@ graph TB
     %% ═══════════════════════════════════════════════════════
     J1 & J2 & J3 & J4 -->|"Auto Loader<br/>cloudFiles"| CREDS
     J6 & J7 -->|"Auto Loader<br/>cloudFiles (ADLS)"| CREDS
+    J8 & J9 & J10 & J11 -->|"Auto Loader<br/>cloudFiles (GCS)"| CREDS

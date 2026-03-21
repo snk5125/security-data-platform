@@ -90,6 +90,24 @@ variable "azure_workspace_notebook_path" {
   default     = "/Shared/security-lakehouse/bronze/azure"
 }
 
+variable "gcp_notebook_source_dir" {
+  description = "Local path to the GCP bronze notebook source files"
+  type        = string
+  default     = "../../notebooks/bronze/gcp"
+}
+
+variable "gcp_workspace_notebook_path" {
+  description = "Workspace path prefix where GCP bronze notebooks are uploaded"
+  type        = string
+  default     = "/Shared/security-lakehouse/bronze/gcp"
+}
+
+variable "enable_scc_job" {
+  description = "Enable the GCP SCC Findings job. Requires SCC org-level activation. Default: false."
+  type        = bool
+  default     = false
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SNS Alert Forwarding
 # These variables are passed from the sns-alerts AWS module outputs via the

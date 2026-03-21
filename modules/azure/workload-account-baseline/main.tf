@@ -181,7 +181,7 @@ resource "azurerm_linux_virtual_machine" "main" {
 
 # ── Windows VM (Windows Server 2022, Standard_B1s) ──
 resource "azurerm_windows_virtual_machine" "main" {
-  name                = "${var.name_prefix}-vm-win"
+  name = "${var.name_prefix}-vm-win"
   # Windows computer_name max 15 chars — truncate prefix and append "win".
   computer_name       = "${substr(replace(var.name_prefix, "-", ""), 0, 12)}win"
   resource_group_name = azurerm_resource_group.workload.name

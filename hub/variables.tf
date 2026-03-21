@@ -60,12 +60,12 @@ variable "sns_publisher_secret_access_key" {
 variable "workloads" {
   description = "List of workload manifests from assemble-workloads.sh. Supports AWS and Azure workloads."
   type = list(object({
-    cloud      = string # "aws" or "azure"
+    cloud      = string # "aws", "azure", or "gcp"
     account_id = string # AWS account ID or Azure subscription ID
     alias      = string
     region     = string
     storage = object({
-      type        = string               # "s3" or "adls"
+      type        = string               # "s3", "adls", or "gcs"
       url         = optional(string, "") # "s3://bucket/" or "abfss://container@account.dfs.core.windows.net/"
       bucket_name = optional(string, "")
       bucket_arn  = optional(string, "")
@@ -89,6 +89,17 @@ variable "azure_credentials" {
     directory_id   = string
     application_id = string
     client_secret  = string
+  })
+  default   = null
+  sensitive = true
+}
+
+variable "gcp_credentials" {
+  description = "GCP service account key credentials for GCS access via Databricks. Null if no GCP workloads exist."
+  type = object({
+    client_email   = string
+    private_key_id = string
+    private_key    = string
   })
   default   = null
   sensitive = true

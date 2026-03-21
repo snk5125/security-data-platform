@@ -31,6 +31,7 @@ module "cloud_integration" {
   managed_storage_bucket_name = var.managed_storage_bucket_name
   workloads                   = var.workloads
   azure_credentials           = var.azure_credentials
+  gcp_credentials             = var.gcp_credentials
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -86,9 +87,13 @@ module "jobs" {
   gold_notebook_source_dir         = "../notebooks/gold"
   threat_intel_notebook_source_dir = "../notebooks/security/threat_intel"
   azure_notebook_source_dir        = "../notebooks/bronze/azure"
+  gcp_notebook_source_dir          = "../notebooks/bronze/gcp"
 
   # Workspace notebook paths.
   workspace_notebook_path              = "/Shared/security-lakehouse/bronze/aws"
   threat_intel_workspace_notebook_path = "/Shared/security-lakehouse/security/threat_intel"
   azure_workspace_notebook_path        = "/Shared/security-lakehouse/bronze/azure"
+  gcp_workspace_notebook_path          = "/Shared/security-lakehouse/bronze/gcp"
+
+  enable_scc_job = false # Set to true when SCC is activated at the org level
 }

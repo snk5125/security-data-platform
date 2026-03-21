@@ -25,13 +25,13 @@ variable "workloads" {
   # Full type accepted for consistency with hub root, even if the module only
   # currently consumes alias, cloud, storage, and read_only_role_arn.
   type = list(object({
-    cloud      = string
+    cloud      = string # "aws", "azure", or "gcp"
     account_id = string
     alias      = string
     region     = string
     storage = object({
       type        = string
-      url         = optional(string, "") # "s3://bucket/" or "abfss://.../" — optional for backward compat
+      url         = optional(string, "") # "s3://bucket/", "abfss://.../', or "gs://bucket/" — optional for backward compat
       bucket_name = optional(string, "")
       bucket_arn  = optional(string, "")
     })
@@ -53,6 +53,17 @@ variable "azure_credentials" {
     directory_id   = string
     application_id = string
     client_secret  = string
+  })
+  default   = null
+  sensitive = true
+}
+
+variable "gcp_credentials" {
+  description = "GCP service account key for GCS access. Null if no GCP workloads."
+  type = object({
+    client_email   = string # maps to gcp_service_account_key.email
+    private_key_id = string
+    private_key    = string
   })
   default   = null
   sensitive = true

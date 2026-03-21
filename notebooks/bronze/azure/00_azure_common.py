@@ -231,21 +231,25 @@ def parse_azure_resource_id(resource_id_col):
       - full_id:         the original resource ID (preserved for unmapped use)
     """
     # Split the resource ID on '/' and extract by position.
-    # Format: /subscriptions/{1}/resourceGroups/{3}/providers/{5}/{6}/{7}
+    # Full format: /subscriptions/{1}/resourceGroups/{3}/providers/{5}/{6}/{7}
     # (indices are after splitting on '/' — first element is empty string)
+    #
+    # Not all Activity Log entries have full resource IDs — subscription-level
+    # operations may have shorter paths. Use element_at with safe bounds checking.
     parts = F.split(resource_id_col, "/")
+    n = F.size(parts)
 
     return F.struct(
         # subscriptions is at index 2 (0=empty, 1="subscriptions", 2=<guid>)
-        parts.getItem(2).alias("subscription_id"),
+        F.when(n > 2, parts.getItem(2)).alias("subscription_id"),
         # resourceGroups is at index 4
-        parts.getItem(4).alias("resource_group"),
+        F.when(n > 4, parts.getItem(4)).alias("resource_group"),
         # provider namespace is at index 6
-        parts.getItem(6).alias("provider"),
+        F.when(n > 6, parts.getItem(6)).alias("provider"),
         # resource type is at index 7
-        parts.getItem(7).alias("resource_type"),
+        F.when(n > 7, parts.getItem(7)).alias("resource_type"),
         # resource name is at index 8
-        parts.getItem(8).alias("resource_name"),
+        F.when(n > 8, parts.getItem(8)).alias("resource_name"),
         # Preserve the full ID for unmapped / forensic use
         resource_id_col.alias("full_id"),
     )

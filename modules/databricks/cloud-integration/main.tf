@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
-# Cloud Integration Module — Databricks ↔ AWS + Azure
+# Cloud Integration Module — Databricks ↔ AWS + Azure + GCP
 # -----------------------------------------------------------------------------
-# Connects Databricks Unity Catalog to AWS (and optionally Azure) by creating:
+# Connects Databricks Unity Catalog to AWS (and optionally Azure/GCP) by creating:
 #
 #   1. Storage credential (hub)     — wraps the hub IAM role for cross-account
 #                                     access to security log buckets
@@ -29,7 +29,7 @@
 #   - Output the external IDs assigned by Databricks
 #   - Feed them back into terraform.tfvars for Phase 5.5 trust policy update
 #
-# Resources created: 5 + (1 per workload in var.workloads) + (1 if Azure workloads exist)
+# Resources created: 5 + (1 per workload in var.workloads) + (1 if Azure workloads exist) + (1 if GCP workloads exist)
 # -----------------------------------------------------------------------------
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -73,6 +73,33 @@ resource "databricks_storage_credential" "managed" {
 # knows which IAM role to assume when reading from or writing to each bucket.
 # Each location must reference its credential by name (not ARN).
 
+locals {
+  # Credential routing — maps cloud type to the correct storage credential name.
+  # Uses merge with conditional entries to avoid null-reference errors when a
+  # cloud type's credential doesn't exist.
+  credential_by_cloud = merge(
+    { "aws" = databricks_storage_credential.hub.name },
+    var.azure_credentials != null ? { "azure" = databricks_storage_credential.azure[0].name } : {},
+    var.gcp_credentials != null ? { "gcp" = databricks_storage_credential.gcp[0].name } : {},
+  )
+
+  # Azure diagnostic containers — Azure Monitor writes Activity Log data to an
+  # auto-managed container named "insights-activity-logs", NOT to the workload's
+  # primary "security-logs" container. Each Azure workload needs an additional
+  # external location for this container so Databricks can read the diagnostic data.
+  #
+  # Extract the storage account host from the workload's abfss:// URL and construct
+  # a new URL targeting the insights-activity-logs container.
+  azure_diagnostic_locations = {
+    for w in var.workloads : w.alias => {
+      # abfss://security-logs@account.dfs.core.windows.net/
+      #   → account.dfs.core.windows.net
+      account_host = regex("@([^/]+)", w.storage.url)[0]
+    }
+    if w.cloud == "azure"
+  }
+}
+
 # One external location per workload, keyed by alias (e.g., "workload_a",
 # "workload_b"). Each points to the workload's security-logs S3 bucket and
 # uses the hub credential for cross-account IAM role chain access.
@@ -85,20 +112,59 @@ resource "databricks_storage_credential" "managed" {
 # Explicit dependency: the credential must be fully registered before
 # Databricks can validate each external location's S3 access.
 resource "databricks_external_location" "workload" {
-  for_each = { for w in var.workloads : w.alias => w }
+  # Azure workloads use per-container external locations (activity-logs-*,
+  # flow-logs-*) instead of a single workload-level location, because Azure
+  # diagnostic data lands in system-managed containers, not a user-created one.
+  for_each = { for w in var.workloads : w.alias => w if w.cloud != "azure" }
 
   name = "security-logs-${each.key}"
   url  = each.value.storage.url
-  # Select credential by cloud type: AWS workloads use the hub IAM role chain;
-  # Azure workloads use the Entra ID service principal credential.
-  credential_name = each.value.cloud == "aws" ? databricks_storage_credential.hub.name : databricks_storage_credential.azure[0].name
+  # Select credential by cloud type via lookup map: AWS → hub IAM role chain,
+  # Azure → Entra ID service principal, GCP → service account key.
+  credential_name = local.credential_by_cloud[each.value.cloud]
   read_only       = true
   comment         = "Security logs for ${each.key} (${each.value.cloud})"
 
   depends_on = [
     databricks_storage_credential.hub,
     databricks_storage_credential.azure,
+    databricks_storage_credential.gcp,
   ]
+}
+
+# Azure diagnostic containers — Azure Monitor diagnostic settings write to
+# auto-managed containers (e.g., "insights-activity-logs") that are separate
+# from the workload's primary container. Each Azure workload needs an
+# additional external location for Databricks to read this diagnostic data.
+resource "databricks_external_location" "azure_diagnostic" {
+  for_each = local.azure_diagnostic_locations
+
+  name            = "activity-logs-${each.key}"
+  url             = "abfss://insights-activity-logs@${each.value.account_host}/"
+  credential_name = local.credential_by_cloud["azure"]
+  read_only       = true
+  comment         = "Azure Activity Log diagnostic data for ${each.key}"
+
+  depends_on = [databricks_storage_credential.azure]
+}
+
+# Azure VNet flow log containers — Azure Network Watcher writes flow log data
+# to an auto-managed container named "insights-logs-flowlogflowevent". Each
+# Azure workload needs an external location for Databricks to read this data.
+# skip_validation: the container is created by Azure when the first flow log
+# batch is written, which may take several minutes after the flow log resource
+# is created. Databricks validates access at query time regardless.
+resource "databricks_external_location" "azure_vnet_flow_log" {
+  for_each = local.azure_diagnostic_locations
+
+  name            = "flow-logs-${each.key}"
+  url             = "abfss://insights-logs-flowlogflowevent@${each.value.account_host}/"
+  credential_name = local.credential_by_cloud["azure"]
+  read_only       = true
+  skip_validation = true
+  comment         = "Azure VNet Flow Log data for ${each.key}"
+
+  depends_on = [databricks_storage_credential.azure]
 }
 
 # Managed storage — Databricks writes managed Delta tables here. This is the
@@ -165,6 +231,37 @@ resource "databricks_storage_credential" "azure" {
 resource "databricks_grants" "azure_credential" {
   count              = var.azure_credentials != null ? 1 : 0
   storage_credential = databricks_storage_credential.azure[0].id
+
+  grant {
+    principal  = "account users"
+    privileges = ["READ_FILES"]
+  }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. GCP STORAGE CREDENTIAL (conditional)
+# ═════════════════════════════════════════════════════════════════════════════
+# Created only when GCP workloads exist. Uses a GCP service account key to
+# authenticate Databricks to GCS. This is required for AWS-hosted workspaces
+# (databricks_gcp_service_account only works on GCP-hosted workspaces).
+
+resource "databricks_storage_credential" "gcp" {
+  count = var.gcp_credentials != null ? 1 : 0
+  name  = "lakehouse-gcp-credential"
+
+  gcp_service_account_key {
+    email          = var.gcp_credentials.client_email
+    private_key_id = var.gcp_credentials.private_key_id
+    private_key    = var.gcp_credentials.private_key
+  }
+
+  comment         = "GCP service account key credential for GCS security log access"
+  skip_validation = true
+}
+
+resource "databricks_grants" "gcp_credential" {
+  count              = var.gcp_credentials != null ? 1 : 0
+  storage_credential = databricks_storage_credential.gcp[0].id
 
   grant {
     principal  = "account users"

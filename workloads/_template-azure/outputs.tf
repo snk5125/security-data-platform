@@ -20,7 +20,7 @@ output "workload_manifest" {
     data_products = {
       network_traffic = {
         format      = "json"
-        path_prefix = "vnet-flow-logs/"
+        path_prefix = "insights-logs-flowlogflowevent/"
       }
       management_plane = {
         format      = "json"

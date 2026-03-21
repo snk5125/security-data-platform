@@ -1,0 +1,9 @@
+terraform {
+  backend "s3" {
+    bucket         = "security-lakehouse-tfstate-<SECURITY_ACCOUNT_ID>"
+    key            = "foundations/gcp-security/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "security-lakehouse-tflock"
+    encrypt        = true
+  }
+}

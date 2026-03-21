@@ -36,3 +36,12 @@ graph LR
         AZSP -->|"Storage Blob<br/>Data Reader"| ADLSWK
         AZSP -->|"Storage Blob<br/>Data Contributor"| ADLSMGD
     end
+
+    subgraph "GCP Service Account Key"
+        GCPCRED["lakehouse-gcp-credential<br/>(Databricks storage credential)"]
+        GCPSA["GCP SA:<br/>lakehouse-databricks-sa<br/>(SA key JSON)"]
+        GCSWK["GCS:<br/>security-logs bucket<br/>(workload-a security logs)"]
+
+        GCPCRED -->|"gcp_service_account_key<br/>auth"| GCPSA
+        GCPSA -->|"objectViewer"| GCSWK
+    end

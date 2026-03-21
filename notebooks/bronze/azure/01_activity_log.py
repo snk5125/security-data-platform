@@ -15,8 +15,8 @@
 # matching the pattern used by the AWS CloudTrail notebook. The original
 # Activity Log event is preserved in the raw_data field for forensic/audit use.
 #
-# Source format: JSON under insights-activity-logs/ (Azure diagnostic settings
-#   export Activity Log to this system-managed path structure)
+# Source format: JSON in the insights-activity-logs container (Azure diagnostic
+#   settings auto-create this container and manage its path structure)
 # Target table: security_poc.bronze.activity_log_raw
 # OCSF version: 1.1.0
 #
@@ -40,12 +40,19 @@ checkpoint_base = dbutils.widgets.get("checkpoint_base")
 
 # COMMAND ----------
 
-# Source path — Azure diagnostic settings export Activity Log JSON files under
-# the insights-activity-logs/ prefix. storage_url already includes the scheme
-# and trailing slash (e.g. "abfss://container@account.dfs.core.windows.net/"),
-# so path suffixes are appended directly.
+# Source path — Azure diagnostic settings export Activity Log JSON files to an
+# auto-managed container named "insights-activity-logs", NOT as a subfolder
+# within the workload's primary container. We derive the correct container URL
+# from the workload storage URL by swapping the container name.
+#
+# abfss://security-logs@account.dfs.core.windows.net/
+#   → abfss://insights-activity-logs@account.dfs.core.windows.net/
+import re
+_account_host = re.search(r'@([^/]+)', azure_workload_a_storage_url).group(1)
+_activity_log_base = f"abfss://insights-activity-logs@{_account_host}/"
+
 source_paths = {
-    "azure_workload_a": f"{azure_workload_a_storage_url}insights-activity-logs/",
+    "azure_workload_a": _activity_log_base,
 }
 
 checkpoint_base_al = f"{checkpoint_base}/activity_log"
@@ -202,16 +209,21 @@ def transform_activity_log_to_ocsf(df):
         ).alias("api"),
 
         # ── Actor — who performed the action ──
-        # Activity Log uses 'caller' (UPN or object ID) and 'claims' for
-        # identity details. The caller field may be an email (user UPN) or
-        # a GUID (service principal object ID).
+        # The REST API format has a 'caller' field. The diagnostic export format
+        # stores the caller in identity.claims instead. We fall back through both.
         F.struct(
             F.struct(
-                col("caller").alias("name"),
-                col("caller").alias("uid"),
-                # Determine type: if caller looks like email -> User, else SP
+                F.coalesce(
+                    col("caller"),
+                    col("identity.claims.`http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name`"),
+                    col("callerIpAddress"),
+                ).alias("name"),
+                F.coalesce(
+                    col("caller"),
+                    col("identity.claims.`http://schemas.microsoft.com/identity/claims/objectidentifier`"),
+                ).alias("uid"),
                 when(
-                    col("caller").contains("@"),
+                    F.coalesce(col("caller"), lit("")).contains("@"),
                     lit("User")
                 ).otherwise(lit("ServicePrincipal")).alias("type"),
             ).alias("user"),
@@ -225,10 +237,10 @@ def transform_activity_log_to_ocsf(df):
         ).alias("resource"),
 
         # ── Cloud context ──
-        # Use extracted subscription ID; Azure Activity Log does not always
-        # include a region field, so we use "global" as a fallback.
+        # Use extracted subscription ID; diagnostic export format stores location
+        # in properties.resourceLocation rather than a top-level 'location' field.
         ocsf_cloud(
-            F.coalesce(col("location"), lit("global")),
+            F.coalesce(col("location"), col("properties.resourceLocation"), lit("global")),
             F.coalesce(col("_subscription_id"), lit("unknown"))
         ).alias("cloud"),
 
@@ -282,12 +294,18 @@ for label, path in source_paths.items():
 
     try:
         # Read raw Activity Log JSON with schema inference.
+        # cloudFiles.partitionColumns="" disables automatic partition extraction
+        # from the directory path. Azure diagnostic settings use a path structure
+        # with duplicate key names (.../m={month}/.../m=00/) which causes an
+        # AMBIGUOUS_REFERENCE error if Auto Loader tries to infer partitions.
         raw_df = (
             spark.readStream.format("cloudFiles")
             .option("cloudFiles.format", "json")
             .option("cloudFiles.inferColumnTypes", "true")
             .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
             .option("cloudFiles.schemaLocation", checkpoint_location)
+            .option("cloudFiles.partitionColumns", "")
+            .option("cloudFiles.schemaHints", "eventTimestamp STRING, resultSignature STRING, caller STRING, location STRING, eventDataId STRING")
             .load(path)
         )
 

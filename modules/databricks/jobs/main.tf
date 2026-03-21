@@ -542,6 +542,51 @@ resource "databricks_notebook" "azure_vnet_flow" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GCP bronze notebooks — uploaded to a dedicated workspace directory.
+# These notebooks ingest GCP Cloud Audit Logs, VPC Flow Logs, Cloud Asset
+# Inventory, and SCC Findings from GCS.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_directory" "gcp_bronze" {
+  path = var.gcp_workspace_notebook_path
+}
+
+resource "databricks_notebook" "gcp_common" {
+  depends_on = [databricks_directory.gcp_bronze]
+  path       = "${var.gcp_workspace_notebook_path}/00_gcp_common"
+  language   = "PYTHON"
+  source     = "${var.gcp_notebook_source_dir}/00_gcp_common.py"
+}
+
+resource "databricks_notebook" "cloud_audit_logs" {
+  depends_on = [databricks_directory.gcp_bronze]
+  path       = "${var.gcp_workspace_notebook_path}/01_cloud_audit_logs"
+  language   = "PYTHON"
+  source     = "${var.gcp_notebook_source_dir}/01_cloud_audit_logs.py"
+}
+
+resource "databricks_notebook" "gcp_vpc_flow" {
+  depends_on = [databricks_directory.gcp_bronze]
+  path       = "${var.gcp_workspace_notebook_path}/02_vpc_flow_logs"
+  language   = "PYTHON"
+  source     = "${var.gcp_notebook_source_dir}/02_vpc_flow_logs.py"
+}
+
+resource "databricks_notebook" "gcp_asset_inventory" {
+  depends_on = [databricks_directory.gcp_bronze]
+  path       = "${var.gcp_workspace_notebook_path}/03_asset_inventory"
+  language   = "PYTHON"
+  source     = "${var.gcp_notebook_source_dir}/03_asset_inventory.py"
+}
+
+resource "databricks_notebook" "gcp_scc_findings" {
+  depends_on = [databricks_directory.gcp_bronze]
+  path       = "${var.gcp_workspace_notebook_path}/04_scc_findings"
+  language   = "PYTHON"
+  source     = "${var.gcp_notebook_source_dir}/04_scc_findings.py"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Gold notebooks — uploaded to the shared gold workspace directory.
 # The gold alerts notebook reads from bronze.vpc_flow and
 # silver.threat_intel_network to produce the unified gold.alerts table.
@@ -785,5 +830,220 @@ resource "databricks_job" "azure_vnet_flow" {
     phase       = "bronze-gold-forward"
     data_source = "vnet_flow"
     cloud       = "azure"
+  }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 4. GCP JOBS
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GCP Cloud Audit Logs Job — 15-minute trigger, 1 task
+# Ingests GCP Cloud Audit Logs from GCS into bronze.gcp_audit_log_raw.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "gcp_audit_logs" {
+  depends_on = [databricks_notebook.gcp_common]
+  name       = "bronze-gcp-audit-logs-ingest"
+
+  task {
+    task_key = "ingest"
+
+    notebook_task {
+      notebook_path   = databricks_notebook.cloud_audit_logs.path
+      base_parameters = local.common_params
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 0/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    phase       = "bronze"
+    data_source = "gcp_audit_logs"
+    cloud       = "gcp"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GCP VPC Flow + Alerts Job — 10-minute trigger, 3-task chain
+# Mirrors the AWS VPC Flow and Azure VNet Flow jobs: ingest → gold_alerts →
+# forward_alerts. GCP VPC Flow records are normalized to the same OCSF
+# Network Activity schema, so the same gold_alerts notebook handles correlation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "gcp_vpc_flow" {
+  depends_on = [
+    databricks_notebook.gcp_common,
+    databricks_notebook.gold_alerts,
+    databricks_notebook.gold_alerts_forward,
+    databricks_secret.sns_access_key_id,
+    databricks_secret.sns_secret_access_key,
+    databricks_secret.sns_topic_arn,
+    databricks_secret.aws_region,
+  ]
+  name = "bronze-gcp-vpc-flow-ingest"
+
+  # Task 1: Bronze ingest — Auto Loader reads GCP VPC Flow logs from GCS
+  task {
+    task_key = "ingest"
+
+    notebook_task {
+      notebook_path   = databricks_notebook.gcp_vpc_flow.path
+      base_parameters = local.common_params
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 2: Gold alerts — same notebook as AWS/Azure (OCSF-normalized)
+  task {
+    task_key = "gold_alerts"
+
+    depends_on {
+      task_key = "ingest"
+    }
+
+    notebook_task {
+      notebook_path = databricks_notebook.gold_alerts.path
+      base_parameters = {
+        bootstrap_lookback_days = "1"
+      }
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 3: Alert forwarding — CDF-based SNS publish
+  task {
+    task_key = "forward_alerts"
+
+    depends_on {
+      task_key = "gold_alerts"
+    }
+
+    notebook_task {
+      notebook_path   = databricks_notebook.gold_alerts_forward.path
+      base_parameters = {}
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 0/10 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    phase       = "bronze-gold-forward"
+    data_source = "gcp_vpc_flow"
+    cloud       = "gcp"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GCP Asset Inventory Job — daily trigger, 1 task
+# Ingests Cloud Asset Inventory exports from GCS.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "gcp_asset_inventory" {
+  depends_on = [databricks_notebook.gcp_common]
+  name       = "gcp-asset-inventory-pipeline"
+
+  task {
+    task_key = "bronze_ingest"
+
+    notebook_task {
+      notebook_path   = databricks_notebook.gcp_asset_inventory.path
+      base_parameters = local.common_params
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 0 3 * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    phase       = "bronze"
+    data_source = "gcp_asset_inventory"
+    cloud       = "gcp"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GCP SCC Findings Job (conditional) — 15-minute trigger, 1 task
+# Only created when SCC workloads exist. The enable_scc_job variable defaults
+# to false — set to true when SCC is activated at the org level.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "gcp_scc_findings" {
+  count      = var.enable_scc_job ? 1 : 0
+  depends_on = [databricks_notebook.gcp_common]
+  name       = "bronze-gcp-scc-findings-ingest"
+
+  task {
+    task_key = "ingest"
+
+    notebook_task {
+      notebook_path   = databricks_notebook.gcp_scc_findings.path
+      base_parameters = local.common_params
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 0/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    phase       = "bronze"
+    data_source = "gcp_scc_findings"
+    cloud       = "gcp"
   }
 }

@@ -20,10 +20,16 @@ graph LR
         ADLSA["ADLS Gen2<br/><AZURE_LOGS_STORAGE_ACCOUNT>"]
     end
 
+    %% ── GCP workload GCS storage ───────────────────────────────────────────
+    subgraph "GCP Workload A"
+        GCSA["GCS Bucket<br/>security-logs"]
+    end
+
     %% ── Ingestion layer ──────────────────────────────────────────────────────
     subgraph INGEST ["Ingestion"]
         AL["Auto Loader<br/>cloudFiles · availableNow<br/>directory listing mode"]
         ALAZ["Auto Loader<br/>cloudFiles · ADLS Gen2<br/>directory listing mode"]
+        ALGCP["Auto Loader<br/>cloudFiles · GCS<br/>directory listing mode"]
         TI_FETCH["HTTP Fetch<br/>01_bronze_ingest<br/>daily · OCSF formatted"]
     end
 
@@ -34,7 +40,11 @@ graph LR
         GD["guardduty_raw"]
         CF["config_raw"]
         AZACT["activity_log_raw<br/>(OCSF — Azure Activity Log)"]
-        AZVF["azure_vnet_flow_raw<br/>(OCSF network activity)"]
+        AZVF["vnet_flow_raw<br/>(OCSF network activity)"]
+        GCPAUDITRAW["gcp_audit_log_raw<br/>(OCSF — Cloud Audit Log)"]
+        GCPFLOWRAW["gcp_vpc_flow_raw<br/>(OCSF network activity)"]
+        GCPASSETRAW["gcp_asset_inventory_raw"]
+        GCPSCCRAW["gcp_scc_findings_raw"]
         TIR["threat_intel_raw<br/>IOC feed rows · 14-day TTL"]
     end
 
@@ -47,7 +57,7 @@ graph LR
     %% ── Gold Delta tables (correlated detections + inventory) ────────────────
     subgraph "Gold Delta Tables"
         EC2["ec2_inventory<br/>Current-state per instance<br/>ENIs, volumes, SGs joined"]
-        ALERTS["alerts<br/>vpc_flow + azure_vnet_flow<br/>× threat_intel joins<br/>MERGE on alert_id"]
+        ALERTS["alerts<br/>vpc_flow + azure_vnet_flow<br/>+ gcp_vpc_flow × threat_intel<br/>joins · MERGE on alert_id"]
         AFWD["alerts_forwarded<br/>CDF version watermark<br/>dedup + delivery tracking"]
     end
 
@@ -65,9 +75,17 @@ graph LR
     end
 
     %% ── ADLS log path labels ────────────────────────────────────────────────
-    subgraph "ADLS Paths"
+    subgraph "ADLS Paths (system-managed containers)"
         PA1["insights-activity-logs/ → JSON"]
-        PA2["vnet-flow-logs/ → JSON (deferred)"]
+        PA2["insights-logs-flowlogflowevent/ → JSON"]
+    end
+
+    %% ── GCS log path labels ──────────────────────────────────────────────
+    subgraph "GCS Paths (Cloud Logging auto-paths)"
+        PG1["cloudaudit.googleapis.com/ → JSON"]
+        PG2["compute.googleapis.com/vpc_flows/ → JSON"]
+        PG3["asset-inventory/ → JSON"]
+        PG4["scc-findings/ → JSON (conditional)"]
     end
 
     %% ── Edges: workload S3 → Auto Loader → bronze ───────────────────────────
@@ -81,7 +99,14 @@ graph LR
     %% ── Edges: Azure ADLS → Auto Loader → bronze ────────────────────────────
     ADLSA --> PA1 & PA2
     PA1 --> ALAZ --> AZACT
-    PA2 -.->|"deferred"| ALAZ -.-> AZVF
+    PA2 --> ALAZ --> AZVF
+
+    %% ── Edges: GCP GCS → Auto Loader → bronze ─────────────────────────────
+    GCSA --> PG1 & PG2 & PG3 & PG4
+    PG1 --> ALGCP --> GCPAUDITRAW
+    PG2 --> ALGCP --> GCPFLOWRAW
+    PG3 --> ALGCP --> GCPASSETRAW
+    PG4 --> ALGCP --> GCPSCCRAW
 
     %% ── Edges: TI feeds → bronze ─────────────────────────────────────────────
     FEODO & ET & IPSUM --> TI_FETCH --> TIR
@@ -94,7 +119,7 @@ graph LR
     TIR -->|"MERGE on ioc_id<br/>daily"| TIN
 
     %% ── Edges: silver + bronze → gold (flow ingest, every 10 min) ───────────
-    VF & AZVF & TIN -->|"watermark join<br/>10-min incremental<br/>MERGE on alert_id"| ALERTS
+    VF & AZVF & GCPFLOWRAW & TIN -->|"watermark join<br/>10-min incremental<br/>MERGE on alert_id"| ALERTS
 
     %% ── Playbooks ────────────────────────────────────────────────────────────
     subgraph PLAYBOOKS ["Playbooks (docs/playbooks/)"]

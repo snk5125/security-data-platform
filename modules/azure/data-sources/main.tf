@@ -47,26 +47,11 @@ resource "azurerm_storage_account" "security_logs" {
   tags = local.module_tags
 }
 
-# ── Storage Containers ──
-# NOTE: Activity Log diagnostic settings create their own path structure
-# (insights-activity-logs/) at the storage account level — they do NOT use
-# a container we create. VNet Flow Logs also write to system-managed paths.
-# These containers are kept for organizational documentation only.
-
-# Root container for Databricks external location. The abfss:// protocol
-# requires a container name — this provides the anchor for the external
-# location URL while actual data lives in service-managed containers below.
-resource "azurerm_storage_container" "security_logs" {
-  name                  = "security-logs"
-  storage_account_name  = azurerm_storage_account.security_logs.name
-  container_access_type = "private"
-}
-
-resource "azurerm_storage_container" "vnet_flow_logs" {
-  name                  = "vnet-flow-logs"
-  storage_account_name  = azurerm_storage_account.security_logs.name
-  container_access_type = "private"
-}
+# NOTE: Azure diagnostic settings and VNet flow logs write to system-managed
+# containers (insights-activity-logs/ and insights-logs-flowlogflowevent/)
+# at the storage account level. No explicitly-created containers are needed
+# for these data sources. The Databricks external locations in the
+# cloud-integration module point directly to these system-managed containers.
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 2. ROLE ASSIGNMENT — SP → Storage Blob Data Reader on logs storage
@@ -117,19 +102,15 @@ resource "azurerm_monitor_diagnostic_setting" "activity_log" {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 4. VNET FLOW LOGS
+# 4. VNET FLOW LOGS → Storage Account
 # ═════════════════════════════════════════════════════════════════════════════
-# VNet Flow Logs — SKIPPED for azurerm v3.x.
-# Azure blocked new NSG flow log creation on June 30, 2025. VNet-level
-# flow logs require azurerm v4.x (uses target_resource_id instead of
-# network_security_group_id). When upgrading to azurerm ~> 4.0, re-enable
-# the flow log resource below with target_resource_id = var.vnet_id.
+# VNet-level flow logs (azurerm v4+ required — uses target_resource_id).
+# Azure writes to the system-managed insights-logs-flowlogflowevent container
+# on the same storage account. The Databricks external location for this
+# container is created in the cloud-integration module.
 #
-# For now, the vnet-flow-logs/ container exists but receives no data.
-# The bronze VNet Flow Log notebook will simply skip with "no files found."
+# Network Watcher is managed explicitly in the same resource group.
 
-# Network Watcher — managed explicitly so it's available when flow logs
-# are re-enabled after provider upgrade.
 resource "azurerm_resource_group" "network_watcher" {
   name     = "NetworkWatcherRG"
   location = var.location
@@ -143,21 +124,22 @@ resource "azurerm_network_watcher" "main" {
   tags                = local.module_tags
 }
 
-# TODO: Re-enable after upgrading to azurerm ~> 4.0
-# resource "azurerm_network_watcher_flow_log" "vnet" {
-#   name                 = "${var.name_prefix}-vnet-flow-log"
-#   network_watcher_name = azurerm_network_watcher.main.name
-#   resource_group_name  = azurerm_resource_group.network_watcher.name
-#   target_resource_id   = var.vnet_id
-#   storage_account_id   = azurerm_storage_account.security_logs.id
-#   enabled              = true
-#   version              = 2
-#   retention_policy {
-#     enabled = true
-#     days    = 30
-#   }
-#   tags = local.module_tags
-# }
+resource "azurerm_network_watcher_flow_log" "vnet" {
+  name                 = "${var.name_prefix}-vnet-flow-log"
+  network_watcher_name = azurerm_network_watcher.main.name
+  resource_group_name  = azurerm_resource_group.network_watcher.name
+  target_resource_id   = var.vnet_id
+  storage_account_id   = azurerm_storage_account.security_logs.id
+  enabled              = true
+  version              = 2
+
+  retention_policy {
+    enabled = true
+    days    = 30
+  }
+
+  tags = local.module_tags
+}
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 5. DEFENDER FOR CLOUD (toggle, default off)
@@ -178,8 +160,7 @@ resource "azurerm_security_center_subscription_pricing" "servers" {
 # JSON to ADLS. Deferred — enable_resource_graph creates the container only.
 
 resource "azurerm_storage_container" "resource_graph" {
-  count                 = var.enable_resource_graph ? 1 : 0
-  name                  = "resource-graph"
-  storage_account_name  = azurerm_storage_account.security_logs.name
-  container_access_type = "private"
+  count              = var.enable_resource_graph ? 1 : 0
+  name               = "resource-graph"
+  storage_account_id = azurerm_storage_account.security_logs.id
 }

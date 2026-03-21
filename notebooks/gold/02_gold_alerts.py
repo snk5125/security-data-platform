@@ -294,23 +294,36 @@ print(f"VPC Flow rows in last {LOOKBACK_DAYS} days: {flow_count}")
 # ─────────────────────────────────────────────────────────────────────────────
 # Threat Intel — active indicators only (expires_at > now)
 # Filter here once; the two-pass join will split on is_network_range.
+# If the TI table doesn't exist yet (threat intel pipeline hasn't run),
+# gracefully skip the correlation — no alerts to generate without IOCs.
 # ─────────────────────────────────────────────────────────────────────────────
-ti_df = (
-    spark.table(SILVER_TI_NETWORK)
-    .filter(col("expires_at") > current_timestamp())
-)
+ti_table_exists = spark.catalog.tableExists(SILVER_TI_NETWORK)
+if not ti_table_exists:
+    print(f"WARNING: {SILVER_TI_NETWORK} does not exist yet.")
+    print("  Run the threat intel pipeline to populate threat indicators.")
+    print("  Skipping TI correlation — no alerts to generate.")
+    ti_count = 0
+    exact_count = 0
+    cidr_count = 0
+    ti_exact = None
+    ti_cidr = None
+else:
+    ti_df = (
+        spark.table(SILVER_TI_NETWORK)
+        .filter(col("expires_at") > current_timestamp())
+    )
 
-ti_count = ti_df.count()
-print(f"Active TI indicators: {ti_count}")
+    ti_count = ti_df.count()
+    print(f"Active TI indicators: {ti_count}")
 
-# Split for the two-pass join strategy.
-ti_exact = ti_df.filter(col("is_network_range") == False)  # noqa: E712 — Spark Column API
-ti_cidr  = ti_df.filter(col("is_network_range") == True)   # noqa: E712
+    # Split for the two-pass join strategy.
+    ti_exact = ti_df.filter(col("is_network_range") == False)  # noqa: E712 — Spark Column API
+    ti_cidr  = ti_df.filter(col("is_network_range") == True)   # noqa: E712
 
-exact_count = ti_exact.count()
-cidr_count  = ti_cidr.count()
-print(f"  Exact-match indicators (single IPs): {exact_count}")
-print(f"  CIDR range indicators:               {cidr_count}")
+    exact_count = ti_exact.count()
+    cidr_count  = ti_cidr.count()
+    print(f"  Exact-match indicators (single IPs): {exact_count}")
+    print(f"  CIDR range indicators:               {cidr_count}")
 
 # COMMAND ----------
 
@@ -406,6 +419,15 @@ def build_alert_rows(match_df, match_direction_value, match_type_value):
     return agg_df
 
 # COMMAND ----------
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EARLY EXIT — skip correlation if no TI data or no VPC Flow data
+# ═════════════════════════════════════════════════════════════════════════════
+if ti_count == 0 or flow_count == 0:
+    # Ensure the gold table exists even when there's nothing to write.
+    print(f"\nSkipping correlation: ti_count={ti_count}, flow_count={flow_count}")
+    print(f"Gold table {GOLD_ALERTS} verified. No alerts to write.")
+    dbutils.notebook.exit(f"Skipped — ti_count={ti_count}, flow_count={flow_count}")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PASS 1: EXACT MATCH (single IPs — is_network_range = False)

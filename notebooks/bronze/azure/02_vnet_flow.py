@@ -6,26 +6,24 @@
 # to a Delta table in OCSF Network Activity (class_uid 4001) format.
 #
 # VNet Flow Logs are JSON files with deeply nested structure:
-#   records[].properties.flows[].rule
-#   records[].properties.flows[].flowGroups[].flowTuples
+#   records[].flowRecords.flows[].aclID
+#   records[].flowRecords.flows[].flowGroups[].rule
+#   records[].flowRecords.flows[].flowGroups[].flowTuples (string)
 #
 # Each flowTuple is a comma-separated string with 13 fields:
-#   epoch,srcIP,dstIP,srcPort,dstPort,protocol,trafficFlow,trafficDecision,
-#   flowState,packetsS2D,bytesS2D,packetsD2S,bytesD2S
+#   epoch,srcIP,dstIP,srcPort,dstPort,protocol,direction,flowState,
+#   encryption,packetsS2D,bytesS2D,packetsD2S,bytesD2S
 #
 # The notebook explodes these nested arrays and parses each tuple into
 # individual columns before mapping to OCSF Network Activity fields.
 #
 # Key mapping decisions:
 #   - All records use activity_id=6 (Traffic) and type_uid=400106
-#   - trafficDecision A -> action_id 1 (Allowed), D -> action_id 2 (Denied)
-#   - trafficFlow I -> direction_id 1 (Inbound), O -> direction_id 2 (Outbound)
+#   - flowState D -> action_id 2 (Denied), B/C/E -> action_id 1 (Allowed)
+#   - direction I -> direction_id 1 (Inbound), O -> direction_id 2 (Outbound)
 #   - Timestamps are Unix epoch seconds -> cast to timestamp
-#   - severity_id is always 1 (Informational) for flow log records
-#   - src_endpoint.ip and dst_endpoint.ip match the OCSF fields used by the
-#     gold_alerts notebook for cross-cloud correlation
 #
-# Source format: JSON under vnet-flow-logs/
+# Source format: JSON under insights-logs-flowlogflowevent/ (system-managed)
 # Target table: security_poc.bronze.vnet_flow_raw
 # OCSF version: 1.1.0
 #
@@ -49,12 +47,19 @@ checkpoint_base = dbutils.widgets.get("checkpoint_base")
 
 # COMMAND ----------
 
-# Source path — VNet Flow Logs are exported under the vnet-flow-logs/ prefix.
-# storage_url already includes the scheme and trailing slash
-# (e.g. "abfss://container@account.dfs.core.windows.net/"), so path suffixes
-# are appended directly.
+# Source path — Azure VNet Flow Logs are written to a system-managed container
+# named "insights-logs-flowlogflowevent" on the workload's storage account.
+# We derive the correct container URL from the workload storage URL by
+# extracting the storage account host and swapping the container name.
+#
+# abfss://security-logs@account.dfs.core.windows.net/
+#   → abfss://insights-logs-flowlogflowevent@account.dfs.core.windows.net/
+import re
+_account_host = re.search(r'@([^/]+)', azure_workload_a_storage_url).group(1)
+_flow_log_base = f"abfss://insights-logs-flowlogflowevent@{_account_host}/"
+
 source_paths = {
-    "azure_workload_a": f"{azure_workload_a_storage_url}vnet-flow-logs/",
+    "azure_workload_a": _flow_log_base,
 }
 
 checkpoint_base_vf = f"{checkpoint_base}/vnet_flow"
@@ -69,20 +74,20 @@ print(f"Target:       {target_table}")
 # =============================================================================
 # FLOW TUPLE FIELD DEFINITIONS — the 13 fields in each comma-separated tuple
 # =============================================================================
-# VNet Flow Log tuples are comma-separated strings with the following format:
-#   epoch,srcIP,dstIP,srcPort,dstPort,protocol,trafficFlow,trafficDecision,
-#   flowState,packetsS2D,bytesS2D,packetsD2S,bytesD2S
+# VNet Flow Log v4 tuples are comma-separated strings with the following format:
+#   epoch,srcIP,dstIP,srcPort,dstPort,protocol,direction,flowState,
+#   encryption,packetsS2D,bytesS2D,packetsD2S,bytesD2S
 #
 # Field descriptions:
-#   epoch            — Unix epoch seconds when the flow was recorded
+#   epoch            — Unix epoch milliseconds when the flow was recorded
 #   srcIP            — Source IP address
 #   dstIP            — Destination IP address
 #   srcPort          — Source port number
 #   dstPort          — Destination port number
 #   protocol         — IANA protocol number (6=TCP, 17=UDP, 1=ICMP)
-#   trafficFlow      — I=Inbound, O=Outbound
-#   trafficDecision  — A=Allowed, D=Denied
-#   flowState        — B=Begin, C=Continuing, E=End
+#   direction        — I=Inbound, O=Outbound
+#   flowState        — B=Begin, C=Continuing, E=End, D=Denied
+#   encryption       — X=Encrypted, NX=Not Encrypted (and variants)
 #   packetsS2D       — Packets from source to destination
 #   bytesS2D         — Bytes from source to destination
 #   packetsD2S       — Packets from destination to source
@@ -90,7 +95,7 @@ print(f"Target:       {target_table}")
 
 FLOW_TUPLE_FIELDS = [
     "epoch", "srcIP", "dstIP", "srcPort", "dstPort",
-    "protocol", "trafficFlow", "trafficDecision", "flowState",
+    "protocol", "direction", "flowState", "encryption",
     "packetsS2D", "bytesS2D", "packetsD2S", "bytesD2S",
 ]
 
@@ -102,21 +107,21 @@ from pyspark.sql.functions import (
 )
 
 # =============================================================================
-# NESTED JSON EXPLOSION — flatten VNet Flow Log records into one row per tuple
+# NESTED JSON EXPLOSION — flatten VNet Flow Log v4 records into one row per tuple
 # =============================================================================
-# VNet Flow Logs have a deeply nested structure:
-#   records[] -> properties.flows[] -> flowGroups[] -> flowTuples (string)
+# VNet Flow Logs v4 have a deeply nested structure:
+#   records[] -> flowRecords.flows[] -> flowGroups[] -> flowTuples (string)
 #
 # We must explode three levels of nesting and then parse each tuple string.
 
 def explode_vnet_flow_records(df):
     """
-    Flatten the nested VNet Flow Log JSON into one row per flow tuple.
+    Flatten the nested VNet Flow Log v4 JSON into one row per flow tuple.
 
     Input: DataFrame with one row per JSON file (containing a records array).
     Output: DataFrame with one row per flow tuple, with columns for:
-      - record-level fields (time, resourceId, macAddress, etc.)
-      - rule name from flows[] level
+      - record-level fields (time, targetResourceID, macAddress, etc.)
+      - rule name from flowGroups[] level
       - parsed tuple fields (epoch, srcIP, dstIP, etc.)
       - _source_file from Auto Loader metadata
     """
@@ -137,32 +142,34 @@ def explode_vnet_flow_records(df):
         # Already flattened — preserve source file metadata.
         df = df.withColumn("_source_file", col("_metadata.file_path"))
 
-    # Step 2: Explode properties.flows[] — each element has a rule and flowGroups.
+    # Step 2: Explode flowRecords.flows[] — each element has an aclID and flowGroups.
+    # VNet v4 uses flowRecords.flows (not properties.flows like NSG format).
     df_flows = df.select(
         col("time"),
-        col("resourceId"),
+        col("targetResourceID"),
         col("macAddress"),
         col("_source_file"),
-        explode("properties.flows").alias("_flow"),
+        explode("flowRecords.flows").alias("_flow"),
     )
 
-    # Step 3: Explode flowGroups[] within each flow — each group has flowTuples.
+    # Step 3: Explode flowGroups[] within each flow — each group has a rule and flowTuples.
     df_groups = df_flows.select(
         col("time").alias("_record_time"),
-        col("resourceId"),
+        col("targetResourceID"),
         col("macAddress"),
         col("_source_file"),
-        col("_flow.rule").alias("nsg_rule"),
+        col("_flow.aclID").alias("acl_id"),
         explode("_flow.flowGroups").alias("_group"),
     )
 
-    # Step 4: Explode flowTuples — each is a comma-separated string.
+    # Step 4: Extract rule and explode flowTuples — each is a comma-separated string.
     df_tuples = df_groups.select(
         col("_record_time"),
-        col("resourceId"),
+        col("targetResourceID"),
         col("macAddress"),
         col("_source_file"),
-        col("nsg_rule"),
+        col("acl_id"),
+        col("_group.rule").alias("rule"),
         explode("_group.flowTuples").alias("_tuple_str"),
     )
 
@@ -189,10 +196,11 @@ def transform_vnet_flow_to_ocsf(df):
     notebook can correlate across clouds.
     """
 
-    # Extract subscription ID from resourceId for cloud.account.uid.
+    # Extract subscription ID from targetResourceID for cloud.account.uid.
+    # VNet flow logs use targetResourceID instead of resourceId.
     df_with_sub = df.withColumn(
         "_subscription_id",
-        F.element_at(F.split(col("resourceId"), "/"), 3)
+        F.element_at(F.split(col("targetResourceID"), "/"), 3)
     )
 
     df_ocsf = df_with_sub.select(
@@ -218,15 +226,13 @@ def transform_vnet_flow_to_ocsf(df):
         lit("Success").alias("status"),
 
         # ── Action ──
-        # trafficDecision: A=Allowed, D=Denied
-        when(col("trafficDecision") == "A", lit(ACTION_ALLOWED))
-        .when(col("trafficDecision") == "D", lit(ACTION_DENIED))
-        .otherwise(lit(ACTION_UNKNOWN))
+        # VNet v4: flowState D=Denied, B/C/E=Allowed (no separate decision field)
+        when(col("flowState") == "D", lit(ACTION_DENIED))
+        .otherwise(lit(ACTION_ALLOWED))
         .cast("int").alias("action_id"),
 
-        when(col("trafficDecision") == "A", lit("Allowed"))
-        .when(col("trafficDecision") == "D", lit("Denied"))
-        .otherwise(lit("Unknown"))
+        when(col("flowState") == "D", lit("Denied"))
+        .otherwise(lit("Allowed"))
         .alias("action"),
 
         # ── Source endpoint ──
@@ -247,9 +253,9 @@ def transform_vnet_flow_to_ocsf(df):
         # ── Connection info ──
         F.struct(
             expr("try_cast(protocol as int)").alias("protocol_num"),
-            # trafficFlow: I=Inbound (1), O=Outbound (2)
-            when(col("trafficFlow") == "I", lit(1))
-            .when(col("trafficFlow") == "O", lit(2))
+            # direction: I=Inbound (1), O=Outbound (2)
+            when(col("direction") == "I", lit(1))
+            .when(col("direction") == "O", lit(2))
             .otherwise(lit(0))
             .cast("int").alias("direction_id"),
         ).alias("connection_info"),
@@ -269,8 +275,6 @@ def transform_vnet_flow_to_ocsf(df):
         ).alias("traffic"),
 
         # ── Cloud context ──
-        # Azure VNet Flow Logs don't include a region field in the tuple, so
-        # we extract it from the resourceId if possible, otherwise "unknown".
         ocsf_cloud(
             lit("unknown"),
             F.coalesce(col("_subscription_id"), lit("unknown")),
@@ -282,33 +286,37 @@ def transform_vnet_flow_to_ocsf(df):
         # ── Unmapped — fields without direct OCSF mapping ──
         F.map_from_arrays(
             F.array(
-                lit("nsg_rule"),
+                lit("rule"),
+                lit("acl_id"),
                 lit("flow_state"),
+                lit("encryption"),
                 lit("mac_address"),
-                lit("resource_id"),
+                lit("target_resource_id"),
                 lit("packets_s2d"),
                 lit("bytes_s2d"),
                 lit("packets_d2s"),
                 lit("bytes_d2s"),
-                lit("traffic_flow_direction"),
+                lit("direction"),
             ),
             F.array(
-                col("nsg_rule").cast("string"),
+                col("rule").cast("string"),
+                col("acl_id").cast("string"),
                 col("flowState").cast("string"),
+                col("encryption").cast("string"),
                 col("macAddress").cast("string"),
-                col("resourceId").cast("string"),
+                col("targetResourceID").cast("string"),
                 col("packetsS2D").cast("string"),
                 col("bytesS2D").cast("string"),
                 col("packetsD2S").cast("string"),
                 col("bytesD2S").cast("string"),
-                col("trafficFlow").cast("string"),
+                col("direction").cast("string"),
             ),
         ).alias("unmapped"),
 
         # ── Raw data — the parsed tuple fields as JSON ──
         to_json(struct(
             [col(f) for f in FLOW_TUPLE_FIELDS]
-            + [col("nsg_rule"), col("macAddress"), col("resourceId")]
+            + [col("rule"), col("acl_id"), col("macAddress"), col("targetResourceID")]
         )).alias("raw_data"),
 
         # ── Ingestion metadata (project convention) ──
@@ -338,6 +346,7 @@ for label, path in source_paths.items():
             .option("cloudFiles.inferColumnTypes", "true")
             .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
             .option("cloudFiles.schemaLocation", checkpoint_location)
+            .option("cloudFiles.partitionColumns", "")
             .load(path)
         )
 

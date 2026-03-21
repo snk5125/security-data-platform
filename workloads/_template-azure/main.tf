@@ -19,7 +19,6 @@ module "data_sources" {
   location             = var.location
   subscription_id      = var.subscription_id
   vnet_id              = module.baseline.vnet_id
-  nsg_id               = module.baseline.nsg_id
   name_prefix          = "${var.name_prefix}-${var.workload_alias}"
   service_principal_id = var.service_principal_id
 }

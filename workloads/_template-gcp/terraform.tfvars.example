@@ -1,0 +1,8 @@
+project_id            = "your-gcp-project-id"
+region                = "us-central1"
+zone                  = "us-central1-a"
+workload_alias        = "gcp-workload-<name>"
+vpc_cidr              = "10.X.0.0/24"
+name_prefix           = "lakehouse"
+service_account_email = "" # From: cd foundations/gcp-security && terraform output service_account_email
+enable_scc            = false

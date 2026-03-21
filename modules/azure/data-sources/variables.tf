@@ -19,11 +19,6 @@ variable "vnet_id" {
   type        = string
 }
 
-variable "nsg_id" {
-  description = "NSG ID for VNet Flow Logs (fallback if VNet flow logs unavailable)."
-  type        = string
-}
-
 variable "name_prefix" {
   description = "Name prefix for all resources."
   type        = string
