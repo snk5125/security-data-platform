@@ -47,6 +47,26 @@ resource "azurerm_storage_account" "security_logs" {
   tags = local.module_tags
 }
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 1b. STANDARD STORAGE ACCOUNT — VNet Flow Logs
+# ═════════════════════════════════════════════════════════════════════════════
+# Network Watcher flow logs require a standard (non-HNS) storage account —
+# they use the Blob API which is incompatible with ADLS Gen2 hierarchical
+# namespace. This account is separate from the ADLS Gen2 account used for
+# Activity Log and other diagnostic data.
+
+resource "azurerm_storage_account" "flow_logs" {
+  name                     = "${substr(replace(var.name_prefix, "-", ""), 0, 20)}flow"
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+  # is_hns_enabled deliberately omitted (defaults to false)
+
+  tags = local.module_tags
+}
+
 # NOTE: Azure diagnostic settings and VNet flow logs write to system-managed
 # containers (insights-activity-logs/ and insights-logs-flowlogflowevent/)
 # at the storage account level. No explicitly-created containers are needed
@@ -62,6 +82,14 @@ resource "azurerm_storage_account" "security_logs" {
 
 resource "azurerm_role_assignment" "sp_logs_reader" {
   scope                = azurerm_storage_account.security_logs.id
+  role_definition_name = "Storage Blob Data Reader"
+  principal_id         = var.service_principal_id
+}
+
+# Grant the service principal read access to the flow logs storage account
+# so Databricks can read VNet Flow Log data via the Azure storage credential.
+resource "azurerm_role_assignment" "sp_flow_logs_reader" {
+  scope                = azurerm_storage_account.flow_logs.id
   role_definition_name = "Storage Blob Data Reader"
   principal_id         = var.service_principal_id
 }
@@ -106,7 +134,8 @@ resource "azurerm_monitor_diagnostic_setting" "activity_log" {
 # ═════════════════════════════════════════════════════════════════════════════
 # VNet-level flow logs (azurerm v4+ required — uses target_resource_id).
 # Azure writes to the system-managed insights-logs-flowlogflowevent container
-# on the same storage account. The Databricks external location for this
+# on the security_logs ADLS Gen2 storage account. Databricks reads this via
+# abfss:// which requires HNS. The Databricks external location for this
 # container is created in the cloud-integration module.
 #
 # Network Watcher is managed explicitly in the same resource group.

@@ -98,6 +98,7 @@ locals {
     }
     if w.cloud == "azure"
   }
+
 }
 
 # One external location per workload, keyed by alias (e.g., "workload_a",
@@ -149,8 +150,9 @@ resource "databricks_external_location" "azure_diagnostic" {
 }
 
 # Azure VNet flow log containers — Azure Network Watcher writes flow log data
-# to an auto-managed container named "insights-logs-flowlogflowevent". Each
-# Azure workload needs an external location for Databricks to read this data.
+# to an auto-managed container named "insights-logs-flowlogflowevent" on the
+# same ADLS Gen2 storage account as Activity Log. Databricks reads via abfss://
+# which requires HNS (enabled on the security_logs account).
 # skip_validation: the container is created by Azure when the first flow log
 # batch is written, which may take several minutes after the flow log resource
 # is created. Databricks validates access at query time regardless.

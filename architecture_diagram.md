@@ -194,7 +194,7 @@ graph TB
         AZMGD["ADLS Gen2: <AZURE_MANAGED_STORAGE_ACCOUNT><br/>Managed storage (future use)"]
     end
 
-    subgraph "Azure: Workload A (3bd01bbf-6efb-42cb-...)"
+    subgraph "Azure: Workload A (AZURE_SUBSCRIPTION_ID)"
         direction TB
         subgraph "VNet-AZ [10.10.0.0/16]"
             subgraph "Public Subnet AZ [10.10.1.0/24]"
@@ -374,7 +374,7 @@ graph LR
         S3B["S3 Bucket<br/>lakehouse-workload-b-security-logs"]
     end
 
-    subgraph "Azure Workload A (3bd01bbf-...)"
+    subgraph "Azure Workload A (AZURE_SUBSCRIPTION_ID)"
         ADLSA["ADLS Gen2<br/><AZURE_LOGS_STORAGE_ACCOUNT>"]
     end
 

@@ -40,7 +40,7 @@ locals {
   #          azure_workload_a_storage_url = "abfss://container@account.dfs.core.windows.net/"
   common_params = merge(
     { checkpoint_base = local.checkpoint_base },
-    { for alias, w in var.workloads : "${alias}_storage_url" => w.storage_url }
+    { for alias, w in var.workloads : "${alias}_storage_url" => w.storage_url },
   )
 }
 
