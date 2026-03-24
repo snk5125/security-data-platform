@@ -86,6 +86,174 @@ resource "aws_s3_bucket_public_access_block" "security_logs" {
   restrict_public_buckets = true
 }
 
+# =============================================================================
+# 1b. Host Telemetry S3 Bucket (Cribl Edge)
+# =============================================================================
+# Dedicated bucket for host-level telemetry collected by Cribl Edge agents.
+# Kept separate from security logs so Auto Loader streams and schemas stay
+# independent — security logs use service-native formats (CloudTrail JSON,
+# VPC Flow parquet, etc.) while host telemetry uses Cribl's own format.
+#
+# Count-gated: only created when var.enable_host_telemetry = true.
+# No KMS key required — AES256 (S3-managed keys) is sufficient for this data.
+#
+# Access model:
+#   - Hub role: cross-account read (GetObject, ListBucket, GetBucketLocation)
+#     for Databricks Unity Catalog external location
+#   - Cribl writer IAM user: write-only (PutObject, GetBucketLocation)
+#     credentials are output as a sensitive value for Cribl Edge configuration
+
+resource "aws_s3_bucket" "host_telemetry" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = "${local.name_prefix}-host-telemetry-${var.account_id}"
+
+  tags = merge(local.module_tags, {
+    Name = "${local.name_prefix}-host-telemetry"
+  })
+}
+
+resource "aws_s3_bucket_versioning" "host_telemetry" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = aws_s3_bucket.host_telemetry[0].id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Server-side encryption with AES256 (S3-managed keys).
+resource "aws_s3_bucket_server_side_encryption_configuration" "host_telemetry" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = aws_s3_bucket.host_telemetry[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Block all public access — host telemetry must never be publicly exposed.
+resource "aws_s3_bucket_public_access_block" "host_telemetry" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = aws_s3_bucket.host_telemetry[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# -----------------------------------------------------------------------------
+# Host Telemetry Bucket Policy
+# -----------------------------------------------------------------------------
+# Two principals need access:
+#   1. Hub role (cross-account read) — same pattern as security logs bucket
+#   2. Cribl writer IAM user (write-only) — PutObject for agent uploads
+#
+# The bucket policy is the bucket-side authorization; the Cribl user's IAM
+# policy is the identity-side authorization. Both must allow the operation.
+
+data "aws_iam_policy_document" "host_telemetry_bucket_policy" {
+  count = var.enable_host_telemetry ? 1 : 0
+
+  # --- Hub Role: cross-account read access for Databricks Unity Catalog ---
+  statement {
+    sid    = "HubRoleCrossAccountRead"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = [var.hub_role_arn]
+    }
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+      "s3:GetBucketLocation",
+    ]
+    resources = [
+      aws_s3_bucket.host_telemetry[0].arn,
+      "${aws_s3_bucket.host_telemetry[0].arn}/*",
+    ]
+  }
+
+  # --- Cribl Writer: write access for agent telemetry uploads ---
+  statement {
+    sid    = "CriblWriterPutObject"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_user.cribl_writer[0].arn]
+    }
+    actions = [
+      "s3:PutObject",
+      "s3:GetBucketLocation",
+    ]
+    resources = [
+      aws_s3_bucket.host_telemetry[0].arn,
+      "${aws_s3_bucket.host_telemetry[0].arn}/*",
+    ]
+  }
+}
+
+resource "aws_s3_bucket_policy" "host_telemetry" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = aws_s3_bucket.host_telemetry[0].id
+  policy = data.aws_iam_policy_document.host_telemetry_bucket_policy[0].json
+}
+
+# =============================================================================
+# 1c. Cribl Writer IAM User
+# =============================================================================
+# Dedicated IAM user for Cribl Edge agents to write host telemetry to S3.
+# Uses an inline policy (not managed) because this is a single-purpose user
+# that should never share its policy with other identities.
+#
+# The access key ID and secret are exposed as sensitive outputs for Cribl
+# Edge configuration. These credentials grant write-only access to the
+# host telemetry bucket — no read, no delete, no other buckets.
+
+resource "aws_iam_user" "cribl_writer" {
+  count = var.enable_host_telemetry ? 1 : 0
+  name  = "${local.name_prefix}-cribl-writer"
+
+  tags = merge(local.module_tags, {
+    Name = "${local.name_prefix}-cribl-writer"
+  })
+}
+
+# Inline policy: PutObject + GetBucketLocation on the host telemetry bucket.
+# GetBucketLocation is required by S3 clients to determine the correct
+# regional endpoint for subsequent requests.
+resource "aws_iam_user_policy" "cribl_writer" {
+  count = var.enable_host_telemetry ? 1 : 0
+  name  = "${local.name_prefix}-cribl-writer-s3-policy"
+  user  = aws_iam_user.cribl_writer[0].name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "WriteHostTelemetry"
+      Effect = "Allow"
+      Action = [
+        "s3:PutObject",
+        "s3:GetBucketLocation",
+      ]
+      Resource = [
+        aws_s3_bucket.host_telemetry[0].arn,
+        "${aws_s3_bucket.host_telemetry[0].arn}/*",
+      ]
+    }]
+  })
+}
+
+# Programmatic access key for the Cribl writer user. The secret is stored in
+# Terraform state (encrypted at rest in S3 backend) and exposed as a sensitive
+# output. Rotate by tainting this resource: terraform taint 'aws_iam_access_key.cribl_writer[0]'
+resource "aws_iam_access_key" "cribl_writer" {
+  count = var.enable_host_telemetry ? 1 : 0
+  user  = aws_iam_user.cribl_writer[0].name
+}
+
 # -----------------------------------------------------------------------------
 # Bucket Policy — grants four AWS service principals write access
 # -----------------------------------------------------------------------------
@@ -360,8 +528,9 @@ resource "aws_iam_role" "read_only" {
   })
 }
 
-# Grant the read-only role access to the security-logs bucket. This is the
-# minimum permission set Databricks needs to read raw security data.
+# Grant the read-only role access to the security-logs bucket (and optionally
+# the host-telemetry bucket). This is the minimum permission set Databricks
+# needs to read raw security data and host telemetry via external locations.
 data "aws_iam_policy_document" "read_only_policy" {
   statement {
     sid    = "S3ReadAccess"
@@ -371,10 +540,19 @@ data "aws_iam_policy_document" "read_only_policy" {
       "s3:ListBucket",
       "s3:GetBucketLocation",
     ]
-    resources = [
-      aws_s3_bucket.security_logs.arn,
-      "${aws_s3_bucket.security_logs.arn}/*",
-    ]
+    resources = concat(
+      [
+        aws_s3_bucket.security_logs.arn,
+        "${aws_s3_bucket.security_logs.arn}/*",
+      ],
+      # Conditionally include the host telemetry bucket when enabled. The hub
+      # role chain-assumes this read-only role, so without these entries the
+      # Databricks external location for host telemetry would fail validation.
+      var.enable_host_telemetry ? [
+        aws_s3_bucket.host_telemetry[0].arn,
+        "${aws_s3_bucket.host_telemetry[0].arn}/*",
+      ] : [],
+    )
   }
 }
 

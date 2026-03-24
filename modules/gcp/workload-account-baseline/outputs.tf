@@ -28,3 +28,9 @@ output "ssh_private_key" {
   value       = tls_private_key.ssh.private_key_pem
   sensitive   = true
 }
+
+output "windows_admin_password" {
+  description = "Password for the 'cribl_admin' user on the Windows VM (set via startup script at boot). GCP does not enable the built-in Administrator account."
+  value       = random_password.windows_admin.result
+  sensitive   = true
+}

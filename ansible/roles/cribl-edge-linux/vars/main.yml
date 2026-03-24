@@ -1,0 +1,11 @@
+# =============================================================================
+# Role Variables — cribl-edge-linux
+# =============================================================================
+# Default values for Cribl Edge installation on Linux hosts.
+# cribl_fleet_leader_url and cribl_fleet_token must be supplied at runtime
+# (via extra-vars or environment variables) — they are not defaulted here.
+# =============================================================================
+
+install_dir: /opt/cribl
+# The bootstrap script registers the systemd service as "cribl-edge"
+service_name: cribl-edge

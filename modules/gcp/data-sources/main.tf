@@ -56,6 +56,59 @@ resource "google_storage_bucket_iam_member" "sa_legacy_reader" {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 2b. HOST TELEMETRY — GCS Bucket + Cribl Writer IAM (conditional)
+# ═════════════════════════════════════════════════════════════════════════════
+# Dedicated bucket for host-level telemetry collected by Cribl Edge agents.
+# Kept separate from security logs so Auto Loader streams and schemas stay
+# independent — security logs use GCP-native formats (Cloud Audit JSON,
+# VPC Flow JSON, etc.) while host telemetry uses Cribl's own format.
+#
+# Count-gated: only created when var.enable_host_telemetry = true.
+#
+# Access model:
+#   - Service account gets objectCreator (Cribl Edge writes)
+#   - Service account gets objectViewer (Databricks reads)
+#   - Service account gets legacyBucketReader (required by Databricks for
+#     external location validation — provides storage.buckets.get)
+
+resource "google_storage_bucket" "host_telemetry" {
+  count         = var.enable_host_telemetry ? 1 : 0
+  project       = var.project_id
+  # Follow same naming as security_logs bucket (no project_id suffix)
+  # to stay within GCS 63-char bucket name limit.
+  name          = "${var.name_prefix}-host-telemetry"
+  location      = var.region
+  force_destroy = true # Demo — allows terraform destroy without emptying
+
+  uniform_bucket_level_access = true
+}
+
+# Cribl Edge writes host telemetry to this bucket via the service account.
+resource "google_storage_bucket_iam_member" "host_telemetry_object_creator" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = google_storage_bucket.host_telemetry[0].name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${var.service_account_email}"
+}
+
+# Databricks reads host telemetry from this bucket via the storage credential.
+resource "google_storage_bucket_iam_member" "host_telemetry_object_viewer" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = google_storage_bucket.host_telemetry[0].name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${var.service_account_email}"
+}
+
+# Required for Databricks external location validation — provides
+# storage.buckets.get which Databricks checks when creating external locations.
+resource "google_storage_bucket_iam_member" "host_telemetry_legacy_reader" {
+  count  = var.enable_host_telemetry ? 1 : 0
+  bucket = google_storage_bucket.host_telemetry[0].name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${var.service_account_email}"
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 3. CLOUD AUDIT LOGS — Log Sink to GCS
 # ═════════════════════════════════════════════════════════════════════════════
 # Routes admin activity and data access audit logs to GCS. The log sink's

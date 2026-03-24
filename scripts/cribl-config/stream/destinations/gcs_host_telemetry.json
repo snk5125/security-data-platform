@@ -1,0 +1,14 @@
+{
+  "id": "gcs_host_telemetry",
+  "type": "google_cloud_storage",
+  "disabled": false,
+  "conf": {
+    "serviceAccountCredentials": "${GCS_SERVICE_ACCOUNT_CREDENTIALS}",
+    "bucket": "${GCS_HOST_TELEMETRY_BUCKET}",
+    "destPath": "host_telemetry/${source_type}/${_time:%Y}/${_time:%m}/${_time:%d}",
+    "compress": "gzip",
+    "maxFileSizeMB": 5,
+    "maxFileOpenTimeSec": 60,
+    "format": "json"
+  }
+}

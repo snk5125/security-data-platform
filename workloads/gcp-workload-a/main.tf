@@ -22,4 +22,5 @@ module "data_sources" {
   network_name          = module.baseline.network_name
   subnet_name           = module.baseline.subnet_name
   enable_scc            = var.enable_scc
+  enable_host_telemetry = true
 }

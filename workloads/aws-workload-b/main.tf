@@ -20,5 +20,6 @@ module "data_sources" {
   vpc_id        = module.baseline.vpc_id
   # Deterministic hub role ARN — the role may not exist yet (created by hub root
   # in Step 4), but ARN-based trust policies don't require the principal to exist.
-  hub_role_arn = "arn:aws:iam::${var.security_account_id}:role/${var.hub_role_name}"
+  hub_role_arn          = "arn:aws:iam::${var.security_account_id}:role/${var.hub_role_name}"
+  enable_host_telemetry = true
 }

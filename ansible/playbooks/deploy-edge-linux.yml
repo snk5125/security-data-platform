@@ -1,0 +1,28 @@
+# =============================================================================
+# Playbook — Deploy Cribl Edge to Linux Hosts
+# =============================================================================
+# Installs and configures Cribl Edge on all Linux workload instances across
+# AWS, Azure, and GCP.
+#
+# Prerequisites:
+#   1. Workload roots must be applied (Terraform) so VMs are running.
+#   2. Run build-inventory.sh to generate inventory/hosts.json:
+#        cd ansible/inventory && bash build-inventory.sh
+#   3. Set fleet leader URL and token as extra-vars:
+#        -e cribl_fleet_leader_url=tcp://main-...:4200
+#        -e cribl_fleet_token=<enrollment-token>
+#
+# Usage:
+#   cd ansible
+#   ansible-playbook playbooks/deploy-edge-linux.yml \
+#     -e cribl_fleet_leader_url="tcp://main-YOUR_ORG.cribl.cloud:4200" \
+#     -e cribl_fleet_token="YOUR_FLEET_TOKEN"
+# =============================================================================
+
+---
+- name: Deploy Cribl Edge to Linux workload instances
+  hosts: linux
+  become: true
+
+  roles:
+    - cribl-edge-linux

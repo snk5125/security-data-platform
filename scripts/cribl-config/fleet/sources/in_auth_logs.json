@@ -1,0 +1,13 @@
+{
+  "id": "in_auth_logs",
+  "type": "file",
+  "disabled": false,
+  "sendToRoutes": false,
+  "mode": "manual",
+  "path": "/var/log/",
+  "filenames": ["auth.log", "secure"],
+  "tailOnly": true,
+  "interval": 10,
+  "connections": [{"output": "stream-tcp", "pipeline": "main"}],
+  "description": "Monitor auth logs (auth.log on Debian/Ubuntu, secure on RHEL/Amazon Linux)"
+}

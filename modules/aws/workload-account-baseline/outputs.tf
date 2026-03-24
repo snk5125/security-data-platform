@@ -48,3 +48,9 @@ output "ssh_private_key" {
   value       = tls_private_key.ssh.private_key_pem
   sensitive   = true
 }
+
+output "windows_admin_password" {
+  description = "Administrator password for the Windows instance (set via user_data at boot)"
+  value       = random_password.windows_admin.result
+  sensitive   = true
+}

@@ -24,8 +24,9 @@ variable "managed_storage_bucket_name" {
 variable "workloads" {
   description = "Map of workload alias to cloud type and storage URL. Used to generate job parameters dynamically."
   type = map(object({
-    cloud       = string
-    storage_url = string
+    cloud                      = string
+    storage_url                = string
+    host_telemetry_storage_url = optional(string, "")
   }))
   default = {}
 }
@@ -106,6 +107,18 @@ variable "enable_scc_job" {
   description = "Enable the GCP SCC Findings job. Requires SCC org-level activation. Default: false."
   type        = bool
   default     = false
+}
+
+variable "host_telemetry_notebook_source_path" {
+  description = "Local path to host telemetry notebook directory. Empty string disables host telemetry job creation."
+  type        = string
+  default     = ""
+}
+
+variable "host_telemetry_notebook_workspace_path" {
+  description = "Databricks workspace path for host telemetry notebooks"
+  type        = string
+  default     = "/Shared/security-lakehouse/bronze/host_telemetry"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

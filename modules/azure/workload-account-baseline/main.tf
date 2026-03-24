@@ -83,6 +83,20 @@ resource "azurerm_network_security_group" "permissive" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
+
+  # WinRM HTTPS — required for Ansible management of Windows VMs.
+  # Intentionally open to 0.0.0.0/0 for demo; production should restrict.
+  security_rule {
+    name                       = "AllowWinRM"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "5986"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
 }
 
 resource "azurerm_subnet_network_security_group_association" "public" {
@@ -192,6 +206,11 @@ resource "azurerm_windows_virtual_machine" "main" {
 
   network_interface_ids = [azurerm_network_interface.windows.id]
 
+  # NOTE: WinRM bootstrap is handled by azurerm_virtual_machine_extension below.
+  # Azure Windows VMs do NOT execute PowerShell via custom_data — that mechanism
+  # only works on Linux (cloud-init). The CustomScriptExtension is the correct
+  # approach for running PowerShell at first boot on Azure Windows VMs.
+
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
@@ -205,4 +224,23 @@ resource "azurerm_windows_virtual_machine" "main" {
   }
 
   tags = local.module_tags
+}
+
+# ── WinRM Bootstrap via CustomScriptExtension ──────────────────────────────
+# Azure Windows VMs cannot execute PowerShell via custom_data (that path only
+# works for Linux/cloud-init). The CustomScriptExtension is the supported
+# mechanism for running PowerShell at first boot. This creates a self-signed
+# TLS certificate, configures the WinRM HTTPS listener on port 5986, enables
+# Basic auth, and opens the Windows Firewall — so Ansible can connect
+# immediately using the admin_username/admin_password defined on the VM.
+resource "azurerm_virtual_machine_extension" "winrm_setup" {
+  name                 = "${var.name_prefix}-winrm-setup"
+  virtual_machine_id   = azurerm_windows_virtual_machine.main.id
+  publisher            = "Microsoft.Compute"
+  type                 = "CustomScriptExtension"
+  type_handler_version = "1.10"
+
+  settings = jsonencode({
+    commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"$cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\\LocalMachine\\My; winrm create winrm/config/Listener?Address=*+Transport=HTTPS '@{Hostname=\\\"'$env:COMPUTERNAME'\\\";CertificateThumbprint=\\\"'$($cert.Thumbprint)'\\\"}'; Set-Item WSMan:\\localhost\\Service\\Auth\\Basic -Value $true; Set-Item WSMan:\\localhost\\Service\\AllowUnencrypted -Value $false; New-NetFirewallRule -Name WINRM-HTTPS -DisplayName 'WinRM HTTPS' -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow\""
+  })
 }

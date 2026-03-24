@@ -39,3 +39,21 @@ output "storage_account_name" {
   description = "Security logs ADLS Gen2 storage account name."
   value       = module.data_sources.storage_account_name
 }
+
+# VM access outputs — consumed by ansible/inventory/build-inventory.sh
+# for Cribl Edge deployment to workload instances.
+output "linux_public_ip" {
+  description = "Public IP of the Linux VM."
+  value       = module.baseline.linux_public_ip
+}
+
+output "windows_public_ip" {
+  description = "Public IP of the Windows VM."
+  value       = module.baseline.windows_public_ip
+}
+
+output "ssh_private_key" {
+  description = "SSH private key for the Linux VM (sensitive, stored in state only)."
+  value       = module.baseline.ssh_private_key
+  sensitive   = true
+}

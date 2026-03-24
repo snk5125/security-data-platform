@@ -1,0 +1,28 @@
+{
+  "id": "edge_to_cloud",
+  "conf": {
+    "routes": [
+      {
+        "id": "edge_to_s3",
+        "name": "Edge to S3",
+        "filter": "__inputId.startsWith('cribl_tcp:') && cribl_cloud == 'aws'",
+        "output": "s3_host_telemetry",
+        "final": true
+      },
+      {
+        "id": "edge_to_adls",
+        "name": "Edge to ADLS",
+        "filter": "__inputId.startsWith('cribl_tcp:') && cribl_cloud == 'azure'",
+        "output": "adls_host_telemetry",
+        "final": true
+      },
+      {
+        "id": "edge_to_gcs",
+        "name": "Edge to GCS",
+        "filter": "__inputId.startsWith('cribl_tcp:') && cribl_cloud == 'gcp'",
+        "output": "gcs_host_telemetry",
+        "final": true
+      }
+    ]
+  }
+}

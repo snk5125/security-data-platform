@@ -1,0 +1,53 @@
+{
+  "id": "bash_history_obfuscation",
+  "conf": {
+    "asyncFuncTimeout": 1000,
+    "output": "default",
+    "groups": {},
+    "functions": [
+      {
+        "id": "mask",
+        "filter": "true",
+        "disabled": false,
+        "conf": {
+          "rules": [
+            {
+              "matchRegex": "/([-]{1,2}p(?:ass(?:word)?)?[\\s=]+)\\S+/",
+              "replaceExpr": "`${g1}***REDACTED***`"
+            },
+            {
+              "matchRegex": "/((?:dapi|sk-|AKIA|ghp_|gho_|Bearer\\s+))\\S+/",
+              "replaceExpr": "`${g1}***REDACTED***`"
+            },
+            {
+              "matchRegex": "/(export\\s+\\w*(?:SECRET|KEY|TOKEN|PASS|CRED|AUTH)\\w*\\s*=\\s*).*/i",
+              "replaceExpr": "`${g1}***REDACTED***`"
+            },
+            {
+              "matchRegex": "/((?:mysql|postgres|mongodb|redis):\\/\\/\\w+:)\\S+(@)/",
+              "replaceExpr": "`${g1}***REDACTED***${g2}`"
+            },
+            {
+              "matchRegex": "/(echo\\s+['\"]?)[A-Za-z0-9+\\/]{40,}={0,2}/",
+              "replaceExpr": "`${g1}***REDACTED_BASE64***`"
+            }
+          ],
+          "fields": ["_raw"]
+        }
+      },
+      {
+        "id": "eval",
+        "filter": "true",
+        "disabled": false,
+        "conf": {
+          "add": [
+            {
+              "name": "obfuscated",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

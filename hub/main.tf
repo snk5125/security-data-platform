@@ -71,8 +71,9 @@ module "jobs" {
 
   # Dynamic workloads map — replaces individual bucket name variables.
   workloads = { for w in var.workloads : replace(w.alias, "-", "_") => {
-    cloud       = w.cloud
-    storage_url = w.storage.url
+    cloud                      = w.cloud
+    storage_url                = w.storage.url
+    host_telemetry_storage_url = try(w.host_telemetry.storage_url, "")
   } }
 
   # SNS forwarding credentials from foundation root.
@@ -96,4 +97,7 @@ module "jobs" {
   gcp_workspace_notebook_path          = "/Shared/security-lakehouse/bronze/gcp"
 
   enable_scc_job = false # Set to true when SCC is activated at the org level
+
+  # Host telemetry notebooks — path relative to hub/ root.
+  host_telemetry_notebook_source_path = "${path.root}/../notebooks/bronze/host_telemetry"
 }

@@ -1,0 +1,9 @@
+# =============================================================================
+# Handlers — cribl-edge-linux
+# =============================================================================
+
+- name: restart cribl-edge
+  ansible.builtin.systemd:
+    name: "{{ service_name }}"
+    state: restarted
+    daemon_reload: true

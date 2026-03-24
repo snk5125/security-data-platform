@@ -15,10 +15,11 @@ module "baseline" {
 module "data_sources" {
   source = "../../modules/azure/data-sources"
 
-  resource_group_name  = module.baseline.resource_group_name
-  location             = var.location
-  subscription_id      = var.subscription_id
-  vnet_id              = module.baseline.vnet_id
-  name_prefix          = "${var.name_prefix}-${var.workload_alias}"
-  service_principal_id = var.service_principal_id
+  resource_group_name   = module.baseline.resource_group_name
+  location              = var.location
+  subscription_id       = var.subscription_id
+  vnet_id               = module.baseline.vnet_id
+  name_prefix           = "${var.name_prefix}-${var.workload_alias}"
+  service_principal_id  = var.service_principal_id
+  enable_host_telemetry = true
 }

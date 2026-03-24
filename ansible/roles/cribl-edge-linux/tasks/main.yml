@@ -1,0 +1,82 @@
+# =============================================================================
+# Tasks — cribl-edge-linux
+# =============================================================================
+# Installs Cribl Edge in edge-managed mode, registers with the fleet leader,
+# and enables the systemd service.
+#
+# Required runtime variables (not defaulted — must be passed via extra-vars):
+#   cribl_fleet_leader_url  — Cribl.Cloud leader URL (e.g. tcp://main-...:4200)
+#   cribl_fleet_token       — Fleet enrollment token
+#
+# Per-host variables (set by inventory):
+#   cribl_cloud     — aws | azure | gcp
+#   cribl_workload  — workload alias (e.g. aws-workload-a)
+# =============================================================================
+
+- name: Check if Cribl Edge is already installed
+  ansible.builtin.stat:
+    path: "{{ install_dir }}/bin/cribl"
+  register: cribl_binary
+
+# Use the Cribl Cloud bootstrap script rather than a CDN tarball.
+# The bootstrap script is hosted by the leader node and pins the correct
+# version, group, and install directory automatically. We override
+# CRIBL_AUTH_TOKEN and CRIBL_TAGS via environment variables.
+- name: Download Cribl Cloud bootstrap script
+  ansible.builtin.get_url:
+    url: "{{ cribl_fleet_leader_url }}/init/install-edge.sh"
+    dest: "/tmp/install-cribl-edge.sh"
+    mode: "0755"
+  when: not cribl_binary.stat.exists
+
+- name: Run bootstrap script to install and enroll Cribl Edge
+  ansible.builtin.command:
+    cmd: /tmp/install-cribl-edge.sh
+  environment:
+    CRIBL_AUTH_TOKEN: "{{ cribl_fleet_token }}"
+    CRIBL_TAGS: '["cribl_cloud:{{ cribl_cloud }}", "cribl_workload:{{ cribl_workload }}"]'
+  args:
+    creates: "{{ install_dir }}/bin/cribl"
+  when: not cribl_binary.stat.exists
+  notify: restart cribl-edge
+
+- name: Clean up bootstrap script
+  ansible.builtin.file:
+    path: "/tmp/install-cribl-edge.sh"
+    state: absent
+
+# ---------------------------------------------------------------------------
+# Switch Cribl Edge to run as root.
+# The bootstrap script creates a 'cribl' user and configures the systemd unit
+# to run as that user, but Edge needs root to read system logs (auth.log,
+# syslog) and run ausearch without sudo.
+# ---------------------------------------------------------------------------
+
+- name: Stop Cribl Edge before ownership change
+  ansible.builtin.systemd:
+    name: "{{ service_name }}"
+    state: stopped
+  when: not cribl_binary.stat.exists
+
+- name: Change Cribl install directory ownership to root
+  ansible.builtin.file:
+    path: "{{ install_dir }}"
+    owner: root
+    group: root
+    recurse: true
+  when: not cribl_binary.stat.exists
+
+- name: Update systemd unit to run as root instead of cribl user
+  ansible.builtin.replace:
+    path: /etc/systemd/system/cribl-edge.service
+    regexp: '^User=cribl$'
+    replace: 'User=root'
+  when: not cribl_binary.stat.exists
+  notify: restart cribl-edge
+
+- name: Ensure Cribl Edge service is started and enabled
+  ansible.builtin.systemd:
+    name: "{{ service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true

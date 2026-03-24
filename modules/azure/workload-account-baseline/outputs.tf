@@ -38,3 +38,9 @@ output "ssh_private_key" {
   value       = tls_private_key.ssh.private_key_pem
   sensitive   = true
 }
+
+output "windows_admin_password" {
+  description = "Admin password for the Windows VM (passed via variable, demo only)."
+  value       = var.windows_admin_password
+  sensitive   = true
+}

@@ -44,6 +44,9 @@ variable "workloads" {
       format      = string
       path_prefix = string
     }))
+    host_telemetry = optional(object({
+      storage_url = optional(string, "")
+    }), { storage_url = "" })
   }))
 }
 

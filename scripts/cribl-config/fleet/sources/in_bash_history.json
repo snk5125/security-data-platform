@@ -1,0 +1,13 @@
+{
+  "id": "in_bash_history",
+  "type": "file",
+  "disabled": false,
+  "sendToRoutes": false,
+  "mode": "manual",
+  "path": "/home/",
+  "filenames": ["*/.bash_history"],
+  "tailOnly": true,
+  "interval": 10,
+  "connections": [{"output": "stream-tcp", "pipeline": "bash_history_obfuscation"}],
+  "description": "Monitor .bash_history files for all users"
+}

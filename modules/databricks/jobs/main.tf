@@ -1047,3 +1047,238 @@ resource "databricks_job" "gcp_scc_findings" {
     cloud       = "gcp"
   }
 }
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. HOST TELEMETRY NOTEBOOKS + JOBS
+# ═════════════════════════════════════════════════════════════════════════════
+# Conditionally uploads host telemetry notebooks and creates two scheduled
+# jobs (Linux and Windows). All resources are count-gated on the source path
+# variable — when empty, nothing is created. This allows the host telemetry
+# pipeline to be enabled only when the notebooks directory exists and the
+# workload accounts have host telemetry storage configured.
+#
+# The Linux job has 4 parallel tasks: host_commands, host_auth, host_syslog,
+# and host_auditd. The Windows job has 1 task: host_windows_events.
+# Both jobs share the same host_telemetry_params (storage URLs from workloads
+# that have host_telemetry_storage_url configured).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Host telemetry job parameters — only includes workloads that have a
+# host_telemetry_storage_url configured (non-empty). Each parameter key is
+# "{alias}_host_telemetry_url" to avoid colliding with the main storage_url.
+locals {
+  host_telemetry_params = {
+    for alias, w in var.workloads :
+    "${alias}_host_telemetry_url" => w.host_telemetry_storage_url
+    if try(w.host_telemetry_storage_url, "") != ""
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Host telemetry notebooks — uploaded to a dedicated workspace directory.
+# These notebooks ingest host-level security telemetry (commands, auth,
+# syslog, auditd, Windows events) from S3/ADLS/GCS into bronze Delta tables.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_directory" "host_telemetry" {
+  count = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  path  = var.host_telemetry_notebook_workspace_path
+}
+
+# Shared host telemetry helper notebook — defines constants, struct builders,
+# and mapping functions used by all host telemetry bronze notebooks via
+# %run ./00_host_common. Must be uploaded before any job that depends on it.
+resource "databricks_notebook" "host_common" {
+  count      = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.host_telemetry]
+  path       = "${var.host_telemetry_notebook_workspace_path}/00_host_common"
+  language   = "PYTHON"
+  source     = "${var.host_telemetry_notebook_source_path}/00_host_common.py"
+}
+
+resource "databricks_notebook" "host_commands" {
+  count      = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.host_telemetry]
+  path       = "${var.host_telemetry_notebook_workspace_path}/01_host_commands"
+  language   = "PYTHON"
+  source     = "${var.host_telemetry_notebook_source_path}/01_host_commands.py"
+}
+
+resource "databricks_notebook" "host_auth" {
+  count      = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.host_telemetry]
+  path       = "${var.host_telemetry_notebook_workspace_path}/02_host_auth"
+  language   = "PYTHON"
+  source     = "${var.host_telemetry_notebook_source_path}/02_host_auth.py"
+}
+
+resource "databricks_notebook" "host_syslog" {
+  count      = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.host_telemetry]
+  path       = "${var.host_telemetry_notebook_workspace_path}/03_host_syslog"
+  language   = "PYTHON"
+  source     = "${var.host_telemetry_notebook_source_path}/03_host_syslog.py"
+}
+
+resource "databricks_notebook" "host_windows_events" {
+  count      = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.host_telemetry]
+  path       = "${var.host_telemetry_notebook_workspace_path}/04_host_windows_events"
+  language   = "PYTHON"
+  source     = "${var.host_telemetry_notebook_source_path}/04_host_windows_events.py"
+}
+
+resource "databricks_notebook" "host_auditd" {
+  count      = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.host_telemetry]
+  path       = "${var.host_telemetry_notebook_workspace_path}/05_host_auditd"
+  language   = "PYTHON"
+  source     = "${var.host_telemetry_notebook_source_path}/05_host_auditd.py"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Host Telemetry Linux Job — 15-minute trigger, 4 parallel tasks
+# Ingests Linux host telemetry from all workloads with host_telemetry_storage_url
+# configured. Tasks run in parallel (no inter-task dependencies) because each
+# data source is independent.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "host_telemetry_linux" {
+  count = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [
+    databricks_notebook.host_common,
+  ]
+  name = "bronze-host-telemetry-linux"
+
+  # Task 1: Host commands — ingests shell command history from all workloads.
+  task {
+    task_key = "host_commands"
+
+    notebook_task {
+      notebook_path = databricks_notebook.host_commands[0].path
+      base_parameters = merge(local.host_telemetry_params, {
+        catalog_name    = var.catalog_name
+        checkpoint_base = local.checkpoint_base
+      })
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 2: Host auth — ingests authentication events (login/logout/sudo).
+  task {
+    task_key = "host_auth"
+
+    notebook_task {
+      notebook_path = databricks_notebook.host_auth[0].path
+      base_parameters = merge(local.host_telemetry_params, {
+        catalog_name    = var.catalog_name
+        checkpoint_base = local.checkpoint_base
+      })
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 3: Host syslog — ingests syslog messages from Linux hosts.
+  task {
+    task_key = "host_syslog"
+
+    notebook_task {
+      notebook_path = databricks_notebook.host_syslog[0].path
+      base_parameters = merge(local.host_telemetry_params, {
+        catalog_name    = var.catalog_name
+        checkpoint_base = local.checkpoint_base
+      })
+    }
+
+    environment_key = "Default"
+  }
+
+  # Task 4: Host auditd — ingests Linux audit daemon events.
+  task {
+    task_key = "host_auditd"
+
+    notebook_task {
+      notebook_path = databricks_notebook.host_auditd[0].path
+      base_parameters = merge(local.host_telemetry_params, {
+        catalog_name    = var.catalog_name
+        checkpoint_base = local.checkpoint_base
+      })
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  # Every 15 minutes — host telemetry logs are collected and shipped with
+  # a short delay. 15-minute cadence balances freshness with compute cost.
+  schedule {
+    quartz_cron_expression = "0 0/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    pipeline = "host_telemetry"
+    phase    = "1a"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Host Telemetry Windows Job — 15-minute trigger, 1 task
+# Ingests Windows Event Logs from all workloads with host_telemetry_storage_url
+# configured. Separate from the Linux job because Windows events use a
+# different schema and parsing pipeline.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "host_telemetry_windows" {
+  count = var.host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [
+    databricks_notebook.host_common,
+  ]
+  name = "bronze-host-telemetry-windows"
+
+  # Task 1: Windows events — ingests Windows Event Logs (Security, System,
+  # Application channels) from all workloads.
+  task {
+    task_key = "host_windows_events"
+
+    notebook_task {
+      notebook_path = databricks_notebook.host_windows_events[0].path
+      base_parameters = merge(local.host_telemetry_params, {
+        catalog_name    = var.catalog_name
+        checkpoint_base = local.checkpoint_base
+      })
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  # Every 15 minutes — matches the Linux job cadence.
+  schedule {
+    quartz_cron_expression = "0 0/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    pipeline = "host_telemetry"
+    phase    = "1b"
+  }
+}

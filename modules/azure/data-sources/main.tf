@@ -95,6 +95,45 @@ resource "azurerm_role_assignment" "sp_flow_logs_reader" {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 2b. HOST TELEMETRY — ADLS Container + Cribl Writer Role (conditional)
+# ═════════════════════════════════════════════════════════════════════════════
+# Dedicated container for host-level telemetry collected by Cribl Edge agents.
+# Kept separate from security log containers so Auto Loader streams and
+# schemas stay independent — security logs use Azure-native formats while
+# host telemetry uses Cribl's own format.
+#
+# Count-gated: only created when var.enable_host_telemetry = true.
+#
+# Access model:
+#   - Service principal gets Storage Blob Data Contributor scoped to this
+#     container — Cribl Edge writes via the SP credentials, Databricks reads
+#     via the same Azure storage credential.
+#   - The account-level Reader assignment (sp_logs_reader) is ordered first
+#     to avoid Azure RBAC propagation conflicts.
+
+resource "azurerm_storage_container" "host_telemetry" {
+  count              = var.enable_host_telemetry ? 1 : 0
+  name               = "host-telemetry"
+  storage_account_id = azurerm_storage_account.security_logs.id
+
+  container_access_type = "private"
+}
+
+# Grant the service principal write access scoped to the host-telemetry
+# container. Storage Blob Data Contributor allows both read and write,
+# which covers Cribl Edge (write) and Databricks (read) access patterns.
+resource "azurerm_role_assignment" "cribl_host_telemetry_writer" {
+  count                = var.enable_host_telemetry ? 1 : 0
+  scope                = azurerm_storage_container.host_telemetry[0].id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = var.service_principal_id
+
+  # Ensure the account-level Reader is applied first to avoid RBAC
+  # propagation race conditions with the container-level assignment.
+  depends_on = [azurerm_role_assignment.sp_logs_reader]
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 3. ACTIVITY LOG — Diagnostic Setting → ADLS
 # ═════════════════════════════════════════════════════════════════════════════
 # Exports subscription-level Activity Log events to the storage account.

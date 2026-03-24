@@ -1,0 +1,17 @@
+{
+  "id": "s3_host_telemetry",
+  "type": "s3",
+  "disabled": false,
+  "conf": {
+    "authType": "manual",
+    "awsAccessKeyId": "${CRIBL_AWS_ACCESS_KEY_ID}",
+    "awsSecretAccessKey": "${CRIBL_AWS_SECRET_ACCESS_KEY}",
+    "bucket": "${S3_HOST_TELEMETRY_BUCKET}",
+    "region": "${AWS_REGION}",
+    "destPath": "host_telemetry/${source_type}/${_time:%Y}/${_time:%m}/${_time:%d}",
+    "compress": "gzip",
+    "maxFileSizeMB": 5,
+    "maxFileOpenTimeSec": 60,
+    "format": "json"
+  }
+}

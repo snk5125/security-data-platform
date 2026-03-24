@@ -1,0 +1,13 @@
+{
+  "id": "in_syslog_files",
+  "type": "file",
+  "disabled": false,
+  "sendToRoutes": false,
+  "mode": "manual",
+  "path": "/var/log/",
+  "filenames": ["syslog", "messages"],
+  "tailOnly": true,
+  "interval": 10,
+  "connections": [{"output": "stream-tcp", "pipeline": "main"}],
+  "description": "Monitor syslog files (syslog on Debian/Ubuntu, messages on RHEL/Amazon Linux)"
+}

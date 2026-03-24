@@ -38,6 +38,9 @@ output "workload_manifest" {
         path_prefix = "config/"
       }
     }
+    host_telemetry = {
+      storage_url = module.data_sources.host_telemetry_storage_url
+    }
   }
 }
 
@@ -50,4 +53,28 @@ output "vpc_id" {
 output "security_logs_bucket_name" {
   description = "Security logs S3 bucket name."
   value       = module.data_sources.security_logs_bucket_name
+}
+
+# VM access outputs — consumed by ansible/inventory/build-inventory.sh
+# for Cribl Edge deployment to workload instances.
+output "linux_public_ip" {
+  description = "Public IP of the Linux instance."
+  value       = module.baseline.linux_public_ip
+}
+
+output "windows_public_ip" {
+  description = "Public IP of the Windows instance."
+  value       = module.baseline.windows_public_ip
+}
+
+output "ssh_private_key" {
+  description = "SSH private key for the Linux instance (sensitive, stored in state only)."
+  value       = module.baseline.ssh_private_key
+  sensitive   = true
+}
+
+output "windows_admin_password" {
+  description = "Windows Administrator password (sensitive, stored in state only)."
+  value       = module.baseline.windows_admin_password
+  sensitive   = true
 }

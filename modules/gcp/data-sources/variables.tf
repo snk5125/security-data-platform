@@ -34,3 +34,15 @@ variable "enable_scc" {
   type        = bool
   default     = false
 }
+
+variable "enable_host_telemetry" {
+  description = <<-EOT
+    Enable host telemetry GCS bucket and Cribl writer IAM resources. When true,
+    creates a dedicated GCS bucket for host-level telemetry from Cribl Edge
+    agents and grants the service account objectCreator (Cribl writes),
+    objectViewer (Databricks reads), and legacyBucketReader (required for
+    Databricks external location validation). Default: false.
+  EOT
+  type        = bool
+  default     = false
+}

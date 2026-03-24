@@ -1,0 +1,14 @@
+{
+  "id": "in_win_event_logs",
+  "type": "win_event_logs",
+  "disabled": false,
+  "conf": {
+    "logNames": [
+      "Security",
+      "Application",
+      "System"
+    ]
+  },
+  "output": "stream-tcp",
+  "pipeline": "wineventlogs"
+}

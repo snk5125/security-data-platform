@@ -1,0 +1,13 @@
+# =============================================================================
+# Role Variables — cribl-edge-windows
+# =============================================================================
+# Default values for Cribl Edge installation on Windows hosts.
+# cribl_fleet_leader_url and cribl_fleet_token must be supplied at runtime
+# (via extra-vars or environment variables) — they are not defaulted here.
+# =============================================================================
+
+install_dir: 'C:\Program Files\Cribl'
+service_name: Cribl
+# CDN URL for the Windows MSI — includes full version+build string.
+# Update this when upgrading the Edge agent version.
+cribl_msi_url: "https://cdn.cribl.io/dl/4.17.0/cribl-4.17.0-7e952fa7-win32-x64.msi"

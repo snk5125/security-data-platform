@@ -1,0 +1,18 @@
+{
+  "id": "adls_host_telemetry",
+  "type": "azure_blob",
+  "disabled": false,
+  "conf": {
+    "authType": "manual",
+    "tenantId": "${AZURE_TENANT_ID}",
+    "clientId": "${AZURE_CLIENT_ID}",
+    "clientSecret": "${AZURE_CLIENT_SECRET}",
+    "storageAccountName": "${ADLS_STORAGE_ACCOUNT_NAME}",
+    "containerName": "host-telemetry",
+    "destPath": "host_telemetry/${source_type}/${_time:%Y}/${_time:%m}/${_time:%d}",
+    "compress": "gzip",
+    "maxFileSizeMB": 5,
+    "maxFileOpenTimeSec": 60,
+    "format": "json"
+  }
+}

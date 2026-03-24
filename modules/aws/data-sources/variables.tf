@@ -36,3 +36,14 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_host_telemetry" {
+  description = <<-EOT
+    Enable host telemetry S3 bucket and Cribl writer IAM resources. When true,
+    creates a dedicated S3 bucket for Cribl Edge agent telemetry (separate from
+    security logs to keep Auto Loader streams and schemas independent), plus an
+    IAM user with write-only credentials for Cribl to push data.
+  EOT
+  type        = bool
+  default     = false
+}

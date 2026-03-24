@@ -1,0 +1,15 @@
+# =============================================================================
+# Group Variables — Windows Hosts
+# =============================================================================
+# Connection settings shared by all Windows targets (AWS, Azure, GCP).
+# WinRM over HTTPS with NTLM authentication — matches the security group /
+# NSG / firewall rules allowing port 5986 in each workload baseline.
+# =============================================================================
+
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_scheme: https
+ansible_port: 5986
+ansible_winrm_server_cert_validation: ignore
+# Override the global become=True from ansible.cfg — Windows doesn't use sudo
+ansible_become: false

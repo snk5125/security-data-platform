@@ -41,6 +41,18 @@ variable "enable_resource_graph" {
   default     = false
 }
 
+variable "enable_host_telemetry" {
+  description = <<-EOT
+    Enable host telemetry ADLS container and Cribl writer role assignment.
+    When true, creates a "host-telemetry" container on the existing HNS
+    storage account and grants the service principal Storage Blob Data
+    Contributor so Cribl Edge agents can write via the SP credentials.
+    Default: false.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags to apply to all resources."
   type        = map(string)

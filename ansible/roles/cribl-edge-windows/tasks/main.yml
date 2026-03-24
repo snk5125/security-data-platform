@@ -1,0 +1,49 @@
+# =============================================================================
+# Tasks — cribl-edge-windows
+# =============================================================================
+# Installs Cribl Edge in managed-edge mode on Windows via msiexec directly
+# from the Cribl CDN, with inline fleet enrollment properties.
+#
+# Required runtime variables (not defaulted — must be passed via extra-vars):
+#   cribl_fleet_leader_url  — Cribl.Cloud leader URL (e.g. https://main-...)
+#   cribl_fleet_token       — Fleet enrollment token
+#
+# Per-host variables (set by inventory):
+#   cribl_cloud     — aws | azure | gcp
+#   cribl_workload  — workload alias (e.g. workload-a)
+# =============================================================================
+
+- name: Check if Cribl Edge is already installed
+  ansible.windows.win_stat:
+    path: 'C:\Program Files\Cribl\bin\cribl.exe'
+  register: cribl_binary
+
+- name: Build msiexec install command
+  ansible.builtin.set_fact:
+    cribl_msi_cmd: >-
+      msiexec /i "{{ cribl_msi_url }}" /qn
+      MODE=mode-managed-edge
+      HOSTNAME={{ cribl_fleet_leader_url | regex_replace('^https?://', '') }}
+      PORT=4200
+      FLEET=default_fleet
+      AUTH={{ cribl_fleet_token }}
+      TLS=true
+      USERNAME=LocalSystem
+  when: not cribl_binary.stat.exists
+
+- name: Install Cribl Edge via msiexec from CDN with fleet enrollment
+  ansible.windows.win_shell: "{{ cribl_msi_cmd }}"
+  when: not cribl_binary.stat.exists
+  register: msi_result
+
+- name: Wait for Cribl Edge binary to appear
+  ansible.windows.win_wait_for:
+    path: 'C:\Program Files\Cribl\bin\cribl.exe'
+    timeout: 180
+  when: not cribl_binary.stat.exists
+
+- name: Ensure Cribl Edge service is running and set to auto-start
+  ansible.windows.win_service:
+    name: "{{ service_name }}"
+    start_mode: auto
+    state: started

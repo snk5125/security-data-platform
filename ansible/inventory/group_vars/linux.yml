@@ -1,0 +1,10 @@
+# =============================================================================
+# Group Variables — Linux Hosts
+# =============================================================================
+# Connection settings shared by all Linux targets (AWS, Azure, GCP).
+# ansible_user is set per-host by build-inventory.sh because the default
+# SSH user differs by cloud (ec2-user, azureadmin, admin).
+# =============================================================================
+
+ansible_connection: ssh
+ansible_python_interpreter: auto_silent

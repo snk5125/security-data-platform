@@ -117,6 +117,16 @@ resource "aws_security_group" "permissive" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # WinRM HTTPS — required for Ansible management of Windows instances.
+  # Intentionally open to 0.0.0.0/0 for demo; production should restrict.
+  ingress {
+    description = "WinRM HTTPS from anywhere (demo - intentionally permissive for Ansible)"
+    from_port   = 5986
+    to_port     = 5986
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Allow all outbound traffic so instances can reach AWS APIs and generate
   # CloudTrail events.
   egress {
@@ -222,6 +232,14 @@ resource "aws_instance" "linux" {
   })
 }
 
+# ── Windows admin password ─────────────────────────────────────────────────
+# Random password for the local Administrator account. Set via EC2 user_data
+# so WinRM/Ansible can authenticate immediately after boot.
+resource "random_password" "windows_admin" {
+  length  = 20
+  special = true
+}
+
 # ── Windows instance ────────────────────────────────────────────────────────
 resource "aws_instance" "windows" {
   ami                    = data.aws_ami.windows.id
@@ -236,6 +254,44 @@ resource "aws_instance" "windows" {
 
   # Enable detailed monitoring for richer CloudWatch metrics.
   monitoring = true
+
+  # Bootstrap WinRM HTTPS listener so Ansible can connect immediately.
+  # Sets the Administrator password, creates a self-signed TLS certificate,
+  # configures a WinRM HTTPS listener on port 5986, enables NTLM auth,
+  # and opens the Windows Firewall for inbound WinRM traffic.
+  user_data = <<-USERDATA
+    <powershell>
+    # Set Administrator password
+    $admin = [ADSI]"WinNT://./Administrator,User"
+    $admin.SetPassword("${random_password.windows_admin.result}")
+
+    # Create self-signed certificate for WinRM HTTPS
+    $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME `
+      -CertStoreLocation Cert:\LocalMachine\My
+
+    # Remove any existing WinRM HTTPS listener, then create a new one
+    Get-ChildItem WSMan:\localhost\Listener | Where-Object {
+      $_.Keys -contains "Transport=HTTPS"
+    } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    New-Item -Path WSMan:\localhost\Listener -Transport HTTPS `
+      -Address * -CertificateThumbPrint $cert.Thumbprint -Force
+
+    # Enable NTLM authentication
+    Set-Item WSMan:\localhost\Service\Auth\Basic -Value $false
+    Set-Item WSMan:\localhost\Service\Auth\Negotiate -Value $true
+
+    # Allow unencrypted only over HTTPS (transport-level encryption)
+    Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $false
+
+    # Open Windows Firewall for WinRM HTTPS
+    New-NetFirewallRule -DisplayName "WinRM HTTPS" -Direction Inbound `
+      -LocalPort 5986 -Protocol TCP -Action Allow
+
+    # Restart WinRM to apply changes
+    Restart-Service WinRM
+    </powershell>
+  USERDATA
 
   tags = merge(local.module_tags, {
     Name = "${local.name_prefix}-windows"

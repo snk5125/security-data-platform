@@ -270,3 +270,76 @@ resource "databricks_grants" "gcp_credential" {
     privileges = ["READ_FILES"]
   }
 }
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 6. HOST TELEMETRY EXTERNAL LOCATIONS (conditional)
+# ═════════════════════════════════════════════════════════════════════════════
+# One external location per workload that has host telemetry enabled. Each
+# points to a dedicated host-telemetry bucket/container separate from the
+# security logs storage. Uses the same credential routing as security log
+# external locations — AWS → hub IAM role chain, Azure → Entra ID service
+# principal, GCP → service account key.
+#
+# Filtered by cloud type because each cloud's external location must reference
+# the correct storage credential (count-gated Azure and GCP credentials).
+
+locals {
+  # Filter to workloads that have a non-empty host_telemetry storage URL.
+  host_telemetry_workloads = {
+    for idx, w in var.workloads : w.alias => w
+    if try(w.host_telemetry.storage_url, "") != ""
+  }
+  host_telemetry_aws = {
+    for alias, w in local.host_telemetry_workloads : alias => w if w.cloud == "aws"
+  }
+  host_telemetry_azure = {
+    for alias, w in local.host_telemetry_workloads : alias => w if w.cloud == "azure"
+  }
+  host_telemetry_gcp = {
+    for alias, w in local.host_telemetry_workloads : alias => w if w.cloud == "gcp"
+  }
+}
+
+# AWS host telemetry — uses hub IAM role chain (same as security log locations).
+# Read-only: Databricks reads host telemetry; Cribl Edge writes it.
+resource "databricks_external_location" "host_telemetry_aws" {
+  for_each = local.host_telemetry_aws
+
+  name            = "host-telemetry-${each.key}"
+  url             = each.value.host_telemetry.storage_url
+  credential_name = databricks_storage_credential.hub.name
+  read_only       = true
+  skip_validation = true
+  comment         = "Host telemetry (Cribl Edge) for ${each.key} (aws)"
+
+  depends_on = [databricks_storage_credential.hub]
+}
+
+# Azure host telemetry — uses Entra ID service principal credential.
+# Read-only: Databricks reads host telemetry; Cribl Edge writes it.
+resource "databricks_external_location" "host_telemetry_azure" {
+  for_each = local.host_telemetry_azure
+
+  name = "host-telemetry-${each.key}"
+  url  = each.value.host_telemetry.storage_url
+  # Route through credential_by_cloud map (null-guarded) instead of direct [0]
+  # reference to avoid out-of-bounds panic if azure_credentials is null.
+  credential_name = local.credential_by_cloud["azure"]
+  read_only       = true
+  comment         = "Host telemetry (Cribl Edge) for ${each.key} (azure)"
+}
+
+# GCP host telemetry — uses GCP service account key credential.
+# Read-only: Databricks reads host telemetry; Cribl Edge writes it.
+resource "databricks_external_location" "host_telemetry_gcp" {
+  for_each = local.host_telemetry_gcp
+
+  name = "host-telemetry-${each.key}"
+  url  = each.value.host_telemetry.storage_url
+  # Route through credential_by_cloud map (null-guarded) instead of direct [0]
+  # reference to avoid out-of-bounds panic if gcp_credentials is null.
+  credential_name = local.credential_by_cloud["gcp"]
+  read_only       = true
+  skip_validation = true
+  comment         = "Host telemetry (Cribl Edge) for ${each.key} (gcp)"
+}
