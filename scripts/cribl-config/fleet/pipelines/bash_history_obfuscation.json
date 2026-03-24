@@ -44,6 +44,10 @@
             {
               "name": "obfuscated",
               "value": "true"
+            },
+            {
+              "name": "source_type",
+              "value": "'bash_history'"
             }
           ]
         }

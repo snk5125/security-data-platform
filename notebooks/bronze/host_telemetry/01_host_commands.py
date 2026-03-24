@@ -167,8 +167,9 @@ for label, path in source_paths.items():
 
         print(f"  {label} done.")
     except Exception as e:
-        if "CF_EMPTY_DIR" in str(e) or "empty" in str(e).lower():
-            print(f"  {label} skipped — no files found yet.")
+        err = str(e)
+        if "CF_EMPTY_DIR" in err or "empty" in err.lower() or "FileNotFoundException" in err or "No such file or directory" in err:
+            print(f"  {label} skipped — no data available yet.")
         else:
             raise
 

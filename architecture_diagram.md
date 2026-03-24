@@ -22,7 +22,7 @@ graph TB
             CAT --> SSEC
         end
 
-        subgraph "Scheduled Jobs (11 Jobs, PAUSED)"
+        subgraph "Scheduled Jobs (13 Jobs, PAUSED)"
             J1["CloudTrail Job<br/>15min trigger · 1 task"]
             J2["bronze-vpc-flow-ingest<br/>10min trigger · 3 tasks<br/>ingest → gold_alerts → forward_alerts"]
             J3["GuardDuty Job<br/>6hr trigger · 1 task"]
@@ -34,9 +34,11 @@ graph TB
             J9["GCP VPC Flow Job<br/>10min trigger · 3 tasks<br/>ingest → gold_alerts → forward_alerts"]
             J10["GCP Asset Inventory Job<br/>24hr trigger · 1 task"]
             J11["GCP SCC Findings Job<br/>6hr trigger · 1 task"]
+            J12["Host Telemetry Linux<br/>15min trigger · 4 tasks<br/>commands, auth, syslog, auditd"]
+            J13["Host Telemetry Windows<br/>15min trigger · 1 task<br/>windows events (3 channels)"]
         end
 
-        subgraph "Notebooks (20)"
+        subgraph "Notebooks (26)"
             subgraph "Bronze/AWS (5)"
                 N0["00_ocsf_common.py"]
                 N1["01_cloudtrail.py"]
@@ -69,6 +71,14 @@ graph TB
                 N7["02_gold_alerts.py"]
                 N8["03_gold_alerts_forward.py"]
             end
+            subgraph "Bronze/Host Telemetry (6)"
+                NH0["00_host_common.py"]
+                NH1["01_host_commands.py"]
+                NH2["02_host_auth.py"]
+                NH3["03_host_syslog.py"]
+                NH4["04_host_windows_events.py"]
+                NH5["05_host_auditd.py"]
+            end
         end
 
         subgraph "Storage Credentials"
@@ -85,6 +95,10 @@ graph TB
             ELAZ_FL["flow-logs-azure-workload-a"]
             ELG["security-logs-gcp-workload-a"]
             EL3["managed-storage"]
+            ELHT_A["host-telemetry-workload-a"]
+            ELHT_B["host-telemetry-workload-b"]
+            ELHT_AZ["host-telemetry-azure-workload-a"]
+            ELHT_GCP["host-telemetry-gcp-workload-a"]
         end
 
         J1 --> N1
@@ -107,15 +121,24 @@ graph TB
         J9 --> N8
         J10 --> NG3
         J11 --> NG4
+        J12 --> NH1
+        J12 --> NH2
+        J12 --> NH3
+        J12 --> NH5
+        J13 --> NH4
         N1 & N2 & N3 & N4 --> DW
         NA1 & NA2 --> DW
         NG1 & NG2 & NG3 & NG4 --> DW
         NTI1 & NTI2 --> DW
         N5 & N6 & N7 & N8 --> DW
+        NH1 & NH2 & NH3 & NH4 & NH5 --> DW
         HC --> EL1 & EL2
         MC --> EL3
         AZC --> ELAZ_AL & ELAZ_FL
         GCPCRED --> ELG
+        HC --> ELHT_A & ELHT_B
+        AZC --> ELHT_AZ
+        GCPCRED --> ELHT_GCP
     end
 
     subgraph "AWS: Security Account (<SECURITY_ACCOUNT_ID>)"
@@ -158,6 +181,7 @@ graph TB
 
         subgraph "Security A"
             S3A["S3: lakehouse-workload-a-<br/>security-logs-<WORKLOAD_A_ACCOUNT_ID>"]
+            S3HTA["S3: lakehouse-workload-a-<br/>host-telemetry-<WORKLOAD_A_ACCOUNT_ID>"]
             KMSA["KMS: <KMS_KEY_PREFIX>-...<br/>GuardDuty encryption"]
             ROA["lakehouse-workload-a-<br/>read-only-role"]
         end
@@ -183,6 +207,7 @@ graph TB
 
         subgraph "Security B"
             S3B["S3: lakehouse-workload-b-<br/>security-logs-<WORKLOAD_B_ACCOUNT_ID>"]
+            S3HTB["S3: lakehouse-workload-b-<br/>host-telemetry-<WORKLOAD_B_ACCOUNT_ID>"]
             KMSB["KMS: <KMS_KEY_PREFIX>-...<br/>GuardDuty encryption"]
             ROB["lakehouse-workload-b-<br/>read-only-role"]
         end
@@ -211,6 +236,7 @@ graph TB
 
         subgraph "Storage AZ"
             ADLSAZ["ADLS Gen2:<br/><AZURE_LOGS_STORAGE_ACCOUNT><br/>System containers:<br/>insights-activity-logs,<br/>insights-logs-flowlogflowevent"]
+            ADLSHTAZ["ADLS Gen2:<br/>host-telemetry container"]
             SPRA["SP: Storage Blob Data Reader"]
         end
     end
@@ -240,9 +266,23 @@ graph TB
 
         subgraph "Storage GCP"
             GCSGCP["GCS: security-logs<br/>Prefixes: audit-logs/,<br/>vpc-flow-logs/, asset-inventory/"]
+            GCSHTGCP["GCS: host-telemetry"]
             GCPRO["SA: objectViewer"]
         end
     end
+
+    subgraph "Cribl Cloud (Host Telemetry Collection)"
+        direction TB
+        CSTREAM["Stream Worker<br/>TCP ingress · S3 destination<br/>partitionExpr: source_type/dt"]
+        CEDGE["Edge Fleet: default_fleet<br/>8 agents (4 Linux, 4 Windows)"]
+        CEDGE -->|"TCP/TLS :10300"| CSTREAM
+    end
+
+    EC2AL & EC2AW -->|"Cribl Edge"| CEDGE
+    EC2BL & EC2BW -->|"Cribl Edge"| CEDGE
+    VMAZL & VMAZW -->|"Cribl Edge"| CEDGE
+    VMGCPL & VMGCPW -->|"Cribl Edge"| CEDGE
+    CSTREAM -->|"Hive partitioned"| S3HTA
 
     %% AWS IAM Chain-Assume Flow
     HC -.->|"sts:AssumeRole"| HUB
@@ -253,17 +293,21 @@ graph TB
     EL3 -.-> MSB
     EL1 -.-> S3A
     EL2 -.-> S3B
+    ELHT_A -.-> S3HTA
+    ELHT_B -.-> S3HTB
 
     %% Azure Entra ID auth flow
     AZC -.->|"Entra ID auth"| AZSP
     AZSP -.->|"Storage Blob<br/>Data Reader"| ADLSAZ
     ELAZ_AL -.-> ADLSAZ
     ELAZ_FL -.-> ADLSAZ
+    ELHT_AZ -.-> ADLSHTAZ
 
     %% GCP Service Account auth flow
     GCPCRED -.->|"SA Key auth"| GCPSA
     GCPSA -.->|"objectViewer"| GCSGCP
     ELG -.-> GCSGCP
+    ELHT_GCP -.-> GCSHTGCP
 
     %% AWS Data Source to S3 flows
     CTA -->|"JSON.gz"| S3A
@@ -401,6 +445,11 @@ graph LR
         GCPASSETRAW["gcp_asset_inventory_raw"]
         GCPSCCRAW["gcp_scc_findings_raw"]
         TIR["threat_intel_raw<br/>IOC feed rows · 14-day TTL"]
+        HT_AUTH["host_auth<br/>(OCSF Authentication)"]
+        HT_SYSLOG["host_syslog<br/>(OCSF API Activity)"]
+        HT_AUDITD["host_auditd<br/>(OCSF API Activity)"]
+        HT_WIN["host_windows_events<br/>(OCSF Auth / Account Change)"]
+        HT_CMD["host_commands<br/>(OCSF API Activity)"]
     end
 
     subgraph "Silver Delta Tables"
@@ -437,6 +486,13 @@ graph LR
         PG4["scc-findings/ → JSON (conditional)"]
     end
 
+    subgraph "Cribl Edge → Stream → Cloud Storage"
+        EDGE_LIN["Cribl Edge (Linux)<br/>auth · syslog · auditd · bash_history"]
+        EDGE_WIN["Cribl Edge (Windows)<br/>Security · System · Application"]
+        CSTR["Cribl Stream<br/>source_type enrichment<br/>bash_history obfuscation"]
+        HTS3["S3: host-telemetry<br/>source_type=auth/ · syslog/<br/>auditd/ · windows_security/<br/>windows_system/ · windows_application/"]
+    end
+
     S3A --> P1 & P2 & P3 & P4
     S3B --> P1 & P2 & P3 & P4
     ADLSA --> PA1 & PA2
@@ -452,6 +508,9 @@ graph LR
     PG3 --> ALGCP --> GCPASSETRAW
     PG4 --> ALGCP --> GCPSCCRAW
     FEODO & ET & IPSUM --> TI_FETCH --> TIR
+    EDGE_LIN & EDGE_WIN --> CSTR --> HTS3
+    HTS3 --> AL --> HT_AUTH & HT_SYSLOG & HT_AUDITD & HT_CMD
+    HTS3 --> AL --> HT_WIN
 
     CF -->|"CDF / incremental"| CDC
     CDC -->|"window + MERGE"| EC2
@@ -489,7 +548,7 @@ graph TD
         CI["module.cloud_integration<br/>4 storage creds (hub + managed + azure + gcp)<br/>6 external locations (workloads + Azure per-container)"]
         UC["module.unity_catalog<br/>Catalog · schemas · grants"]
         WC["module.workspace_config<br/>Cluster policy"]
-        JOBS["module.jobs<br/>20 notebooks · 6 directories<br/>11 jobs · secret scope + secrets"]
+        JOBS["module.jobs<br/>26 notebooks · 7 directories<br/>13 jobs · secret scope + secrets"]
         CI --> IAM
         CI --> UC
         UC --> WC
@@ -504,6 +563,15 @@ graph TD
     FOUNDGCP -->|"SA email for IAM<br/>bindings"| WKGCPA
     WKA & WKB & WKAZA & WKGCPA -->|"terraform output"| ASM
     ASM -->|"workloads.auto.tfvars.json"| CI
+
+    subgraph CRIBL ["Cribl Edge Deployment (Ansible + REST API)"]
+        direction TB
+        ANS["ansible/<br/>Roles: cribl-edge-linux, cribl-edge-windows<br/>Inventory from Terraform outputs"]
+        CCONF["scripts/configure-cribl.sh<br/>Fleet pipelines · sources · Stream destinations"]
+    end
+
+    WKA & WKB & WKAZA & WKGCPA -->|"SSH/WinRM IPs"| ANS
+    ANS -->|"configure fleet"| CCONF
 ```
 
 ## Resource Count by Root
@@ -518,5 +586,5 @@ graph TD
 | `workloads/aws-workload-b/` | `baseline` + `data_sources` | ~28 | ~6 |
 | `workloads/azure-workload-a/` | `baseline` + `data_sources` | ~19 | ~1 |
 | `workloads/gcp-workload-a/` | `baseline` + `data_sources` | ~20 | ~2 |
-| `hub/` | `iam.tf` (inline) + `cloud_integration` + `unity_catalog` + `workspace_config` + `jobs` | ~65 | ~10 |
-| **Total (across 9 roots)** | | **~186** | **~33** |
+| `hub/` | `iam.tf` (inline) + `cloud_integration` + `unity_catalog` + `workspace_config` + `jobs` | ~75 | ~10 |
+| **Total (across 9 roots)** | | **~196** | **~33** |

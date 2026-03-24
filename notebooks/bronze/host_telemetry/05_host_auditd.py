@@ -131,12 +131,16 @@ def transform_auditd_to_ocsf(df):
         # ── Message — the raw auditd log line ──
         col("_raw").alias("message"),
 
-        # ── Actor — the user associated with the audit event ──
-        # auditd records may have user, uid, and auid fields. We use the
-        # human-readable user name for actor.user.name and the numeric uid
-        # for actor.user.uid. The auid (audit login UID) is preserved but
-        # not mapped to a standard OCSF field.
-        build_actor_struct("user", "uid").alias("actor"),
+        # ── Actor — extract user info from _raw key=value pairs ──
+        # ausearch -i output includes uid=<name> and auid=<name> fields.
+        # Cribl Edge doesn't parse these into top-level JSON fields, so
+        # we extract them from the raw text.
+        F.struct(
+            F.struct(
+                F.regexp_extract(col("_raw"), r"uid=(\S+)", 1).alias("name"),
+                F.regexp_extract(col("_raw"), r"auid=(\S+)", 1).alias("uid"),
+            ).alias("user"),
+        ).alias("actor"),
 
         # ── Device — the host where the audit event occurred ──
         build_device_struct("host").alias("device"),
@@ -189,8 +193,9 @@ for label, path in source_paths.items():
 
         print(f"  {label} done.")
     except Exception as e:
-        if "CF_EMPTY_DIR" in str(e) or "empty" in str(e).lower():
-            print(f"  {label} skipped — no files found yet.")
+        err = str(e)
+        if "CF_EMPTY_DIR" in err or "empty" in err.lower() or "FileNotFoundException" in err or "No such file or directory" in err:
+            print(f"  {label} skipped — no data available yet.")
         else:
             raise
 

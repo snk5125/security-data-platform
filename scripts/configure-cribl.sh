@@ -279,8 +279,10 @@ apply_fleet() {
   echo " Fleet Configuration (group: ${fleet_group})"
   echo "============================================"
 
-  # Apply pipeline
-  apply_pipeline "${fleet_group}" "${FLEET_DIR}/pipelines/bash_history_obfuscation.json"
+  # Apply pipelines
+  for pipeline_file in "${FLEET_DIR}"/pipelines/*.json; do
+    apply_pipeline "${fleet_group}" "${pipeline_file}"
+  done
 
   # Apply all sources
   for source_file in "${FLEET_DIR}"/sources/*.json; do

@@ -1,0 +1,22 @@
+{
+  "id": "syslog_enrichment",
+  "conf": {
+    "asyncFuncTimeout": 1000,
+    "output": "default",
+    "groups": {},
+    "description": "Enriches syslog events with source_type field",
+    "functions": [
+      {
+        "id": "eval",
+        "filter": "true",
+        "disabled": false,
+        "conf": {
+          "add": [
+            {"name": "cribl", "value": "'yes'"},
+            {"name": "source_type", "value": "'syslog'"}
+          ]
+        }
+      }
+    ]
+  }
+}

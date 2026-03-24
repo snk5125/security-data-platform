@@ -5,9 +5,9 @@
   "sendToRoutes": false,
   "mode": "manual",
   "path": "/var/log/",
-  "filenames": ["syslog", "messages"],
-  "tailOnly": true,
+  "filenames": ["*/syslog", "*/messages"],
+  "tailOnly": false,
   "interval": 10,
-  "connections": [{"output": "stream-tcp", "pipeline": "main"}],
+  "connections": [{"output": "stream-tcp", "pipeline": "syslog_enrichment"}],
   "description": "Monitor syslog files (syslog on Debian/Ubuntu, messages on RHEL/Amazon Linux)"
 }

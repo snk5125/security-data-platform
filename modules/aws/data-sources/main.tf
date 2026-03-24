@@ -237,6 +237,7 @@ resource "aws_iam_user_policy" "cribl_writer" {
       Action = [
         "s3:PutObject",
         "s3:GetBucketLocation",
+        "s3:ListBucket",
       ]
       Resource = [
         aws_s3_bucket.host_telemetry[0].arn,

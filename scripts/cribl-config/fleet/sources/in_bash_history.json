@@ -6,7 +6,7 @@
   "mode": "manual",
   "path": "/home/",
   "filenames": ["*/.bash_history"],
-  "tailOnly": true,
+  "tailOnly": false,
   "interval": 10,
   "connections": [{"output": "stream-tcp", "pipeline": "bash_history_obfuscation"}],
   "description": "Monitor .bash_history files for all users"

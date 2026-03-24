@@ -41,7 +41,7 @@ output "cloudtrail_arn" {
 
 output "host_telemetry_storage_url" {
   description = "S3 URL of the host telemetry bucket — used for Databricks external locations and Auto Loader. Empty string when host telemetry is disabled."
-  value       = var.enable_host_telemetry ? "s3://${aws_s3_bucket.host_telemetry[0].id}" : ""
+  value       = var.enable_host_telemetry ? "s3://${aws_s3_bucket.host_telemetry[0].id}/" : ""
 }
 
 output "host_telemetry_write_credentials" {

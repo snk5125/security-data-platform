@@ -1,0 +1,16 @@
+{
+  "id": "ausearch",
+  "type": "exec",
+  "disabled": false,
+  "sendToRoutes": false,
+  "pqEnabled": false,
+  "streamtags": [],
+  "retries": 10,
+  "scheduleType": "interval",
+  "staleChannelFlushMs": 10000,
+  "interval": 60,
+  "description": "auditd logs",
+  "command": "ausearch -i --checkpoint ./check.txt",
+  "breakerRulesets": ["AUSearch Rules"],
+  "connections": [{"output": "stream-tcp", "pipeline": "auditd_enrichment"}]
+}

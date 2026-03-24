@@ -2,13 +2,19 @@
   "id": "in_win_event_logs",
   "type": "win_event_logs",
   "disabled": false,
-  "conf": {
-    "logNames": [
-      "Security",
-      "Application",
-      "System"
-    ]
-  },
-  "output": "stream-tcp",
-  "pipeline": "wineventlogs"
+  "sendToRoutes": false,
+  "logNames": [
+    "Security",
+    "Application",
+    "System"
+  ],
+  "readMode": "newest",
+  "interval": 10,
+  "batchSize": 500,
+  "connections": [
+    {
+      "output": "stream-tcp",
+      "pipeline": "wineventlogs"
+    }
+  ]
 }

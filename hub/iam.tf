@@ -136,6 +136,8 @@ resource "aws_iam_role_policy" "hub_cross_account" {
         Resource = [
           "arn:aws:s3:::*-security-logs-*",
           "arn:aws:s3:::*-security-logs-*/*",
+          "arn:aws:s3:::*-host-telemetry-*",
+          "arn:aws:s3:::*-host-telemetry-*/*",
         ]
         Condition = {
           StringEquals = {

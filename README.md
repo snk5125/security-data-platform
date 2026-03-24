@@ -1,6 +1,6 @@
 # Security Data Lakehouse
 
-A multi-cloud security data lakehouse that collects security telemetry from AWS, Azure, and GCP, normalizes it into OCSF v1.1.0, and correlates it against threat intelligence — all running on Databricks Free Edition.
+A multi-cloud security data lakehouse that collects security telemetry from AWS, Azure, and GCP, normalizes it into OCSF v1.1.0, and correlates it against threat intelligence — all running on Databricks Free Edition. Includes host-level telemetry collection via Cribl Edge agents deployed to all workload instances.
 
 ## Overview
 
@@ -8,16 +8,19 @@ Security teams working across multiple cloud providers and accounts face a commo
 
 Terraform deploys the full stack across 3 AWS accounts, an Azure subscription, and a GCP project. Auto Loader ingests security logs from S3, ADLS Gen2, and GCS. The bronze layer normalizes everything into OCSF v1.1.0 format — a common schema that makes cross-cloud analysis possible. The gold layer correlates network flows against threat intelligence feeds (Feodo Tracker, Emerging Threats, IPsum) and forwards matched alerts to SNS within ~10 minutes of the original network event.
 
+Cribl Edge agents run on all 8 workload instances (4 Linux, 4 Windows), collecting host-level telemetry — auth logs, syslog, auditd, bash history, and Windows Event Logs. A Cribl Stream pipeline enriches events with `source_type` metadata, obfuscates sensitive data in bash history, and writes to Hive-partitioned cloud storage. Databricks bronze notebooks ingest this data via Auto Loader and normalize it into OCSF format alongside the cloud-native security logs.
+
 The entire pipeline runs on Databricks Free Edition's Starter Warehouse — no paid compute required. New AWS accounts, Azure subscriptions, or GCP projects can be onboarded via a template-copy workflow with automated scripts, and the project is designed to be forked and adapted.
 
 ### At a Glance
 
 | | |
 |---|---|
-| **Infrastructure** | ~180 Terraform resources across 9 independent roots |
+| **Infrastructure** | ~200 Terraform resources across 9 independent roots |
 | **Accounts** | 3 AWS accounts + 1 Azure subscription + 1 GCP project |
-| **Data Sources** | CloudTrail, VPC Flow Logs, GuardDuty, AWS Config, Activity Log, VNet Flow Logs, Cloud Audit Logs, GCP VPC Flow Logs, Cloud Asset Inventory, SCC Findings |
-| **Pipeline** | 11 scheduled jobs, 20 notebooks, full Bronze/Silver/Gold medallion |
+| **Cloud Data Sources** | CloudTrail, VPC Flow Logs, GuardDuty, AWS Config, Activity Log, VNet Flow Logs, Cloud Audit Logs, GCP VPC Flow Logs, Cloud Asset Inventory, SCC Findings |
+| **Host Telemetry** | Cribl Edge on 8 hosts (4 Linux, 4 Windows) — auth logs, syslog, auditd, bash history, Windows Event Logs |
+| **Pipeline** | 13 scheduled jobs, 26 notebooks, full Bronze/Silver/Gold medallion |
 | **Alert Latency** | ~10 minutes from network flow to SNS notification |
 | **Compute** | Databricks Free Edition — Serverless Starter Warehouse |
 
@@ -30,12 +33,13 @@ graph TB
         UC["Unity Catalog<br/>security_poc · bronze/silver/gold/security"]
         DW["Serverless Starter Warehouse"]
 
-        subgraph JOBS ["Scheduled Jobs (11)"]
+        subgraph JOBS ["Scheduled Jobs (13)"]
             J1["CloudTrail"] & J2["VPC Flow + Alerts"] & J3["GuardDuty"]
             J4["Config Pipeline"] & J5["Threat Intel"]
             J6["Activity Log"] & J7["VNet Flow + Alerts"]
             J8["GCP Audit Logs"] & J9["GCP VPC Flow + Alerts"]
             J10["GCP Asset Inventory"] & J11["GCP SCC Findings"]
+            J12["Host Telemetry Linux"] & J13["Host Telemetry Windows"]
         end
 
         subgraph CREDS ["Storage Credentials"]
@@ -46,48 +50,61 @@ graph TB
         end
     end
 
+    subgraph CRIBL ["Cribl Cloud"]
+        STREAM["Stream Worker<br/>Routes · S3 partitionExpr"]
+        FLEET["Edge Fleet<br/>default_fleet · 8 agents"]
+    end
+
     subgraph SEC ["AWS Security Account"]
         HUB["Hub IAM Role"] & MSR["Managed Storage Role"]
         S3M["S3: Managed Storage"] & SNS["SNS Alerts"]
     end
 
     subgraph WK ["AWS Workload Accounts (A, B)"]
-        EC2["VPC + EC2 instances"]
+        EC2["VPC + EC2 instances<br/>+ Cribl Edge"]
         DS_AWS["CloudTrail · VPC Flow · GuardDuty · Config"]
-        S3W["S3: Security Logs"] & RO["Read-Only Role"]
+        S3W["S3: Security Logs"]
+        S3HT["S3: Host Telemetry"]
+        RO["Read-Only Role"]
     end
 
     subgraph AZ ["Azure Workload (A)"]
-        VMS["VNet + VMs"]
+        VMS["VNet + VMs<br/>+ Cribl Edge"]
         DS_AZ["Activity Log · VNet Flow Logs"]
-        ADLS["ADLS Gen2: Security Logs"]
+        ADLS["ADLS Gen2: Security Logs + Host Telemetry"]
     end
 
     subgraph GCP ["GCP Workload (A)"]
-        GCPVMS["VPC + VMs"]
+        GCPVMS["VPC + VMs<br/>+ Cribl Edge"]
         DS_GCP["Cloud Audit · VPC Flow · Asset Inventory · SCC"]
-        GCS["GCS: Security Logs"]
+        GCS["GCS: Security Logs + Host Telemetry"]
     end
 
     HC -.->|"AssumeRole"| HUB
     MC -.->|"AssumeRole"| MSR
     HUB -.->|"AssumeRole"| RO
-    RO -.->|"S3 read"| S3W
+    RO -.->|"S3 read"| S3W & S3HT
     MSR -.->|"S3 read/write"| S3M
     AZC -.->|"Entra ID"| ADLS
     GCPCRED -.->|"SA Key"| GCS
     EC2 -.-> DS_AWS -->|"logs"| S3W
     VMS -.-> DS_AZ -->|"logs"| ADLS
     GCPVMS -.-> DS_GCP -->|"logs"| GCS
+    EC2 -->|"auth·syslog·auditd<br/>bash_history"| FLEET
+    VMS -->|"auth·syslog·auditd"| FLEET
+    GCPVMS -->|"auth·syslog·auditd"| FLEET
+    FLEET -->|"TCP/TLS"| STREAM
+    STREAM -->|"Hive partitioned<br/>source_type=X/dt=Y"| S3HT
     J2 & J7 & J9 -->|"sns:Publish"| SNS
     JOBS -->|"Auto Loader"| CREDS
+    J12 & J13 -->|"Auto Loader"| S3HT
 ```
 
 For detailed diagrams (IAM trust chains, data flow, Terraform dependency graph), see [architecture_diagram.md](architecture_diagram.md).
 
 ## How It Works
 
-**Ingestion (Bronze)** — Scheduled jobs run Auto Loader against S3, ADLS Gen2, and GCS via Unity Catalog external locations. Each data source has its own notebook that normalizes raw logs into OCSF v1.1.0 format — CloudTrail, VPC Flow Logs, GuardDuty, and AWS Config from AWS; Activity Log and VNet Flow Logs from Azure; Cloud Audit Logs, VPC Flow Logs, Cloud Asset Inventory, and SCC Findings from GCP. A separate threat intel pipeline fetches IOC feeds (Feodo Tracker, Emerging Threats, IPsum) daily. Ingestion cadence is 10-15 minutes for security logs, daily for threat intel.
+**Ingestion (Bronze)** — Scheduled jobs run Auto Loader against S3, ADLS Gen2, and GCS via Unity Catalog external locations. Each data source has its own notebook that normalizes raw logs into OCSF v1.1.0 format — CloudTrail, VPC Flow Logs, GuardDuty, and AWS Config from AWS; Activity Log and VNet Flow Logs from Azure; Cloud Audit Logs, VPC Flow Logs, Cloud Asset Inventory, and SCC Findings from GCP. A separate threat intel pipeline fetches IOC feeds (Feodo Tracker, Emerging Threats, IPsum) daily. Host telemetry from Cribl Edge agents (auth logs, syslog, auditd, bash history, Windows Event Logs) is ingested from Hive-partitioned cloud storage and normalized into OCSF format. Ingestion cadence is 10-15 minutes for security logs and host telemetry, daily for threat intel.
 
 **Enrichment (Silver)** — AWS Config snapshots are processed into CDC rows that track per-resource changes over time. Threat intel IOCs are deduplicated via MERGE with TTL-based expiration, keeping the network IOC table current without unbounded growth.
 
@@ -97,6 +114,10 @@ For detailed diagrams (IAM trust chains, data flow, Terraform dependency graph),
 
 ```
 security-data-lakehouse/
+├── ansible/                            # Cribl Edge deployment (Ansible roles + inventory)
+│   ├── roles/cribl-edge-linux/         # Linux Edge bootstrap (root, auditd)
+│   ├── roles/cribl-edge-windows/       # Windows Edge MSI install
+│   └── inventory/                      # Dynamic inventory from Terraform outputs
 ├── bootstrap/                          # State backend (S3 + DynamoDB, local state)
 ├── foundations/
 │   ├── aws-security/                   # Managed S3, KMS, SNS alerts
@@ -120,10 +141,15 @@ security-data-lakehouse/
 │   ├── bronze/aws/                     # OCSF common + CloudTrail, VPC Flow, GuardDuty, Config
 │   ├── bronze/azure/                   # Azure common + Activity Log, VNet Flow
 │   ├── bronze/gcp/                     # GCP common + Cloud Audit, VPC Flow, Asset Inventory, SCC
+│   ├── bronze/host_telemetry/          # Host common + auth, syslog, auditd, commands, Windows events
 │   ├── silver/                         # Config CDC
 │   ├── gold/                           # EC2 inventory, alerts, alert forwarding
 │   └── security/threat_intel/          # TI feed ingest + silver network IOCs
-├── scripts/                            # assemble-workloads.sh, apply-all.sh, migrate-state.sh
+├── scripts/
+│   ├── cribl-config/                   # Cribl fleet/stream JSON configs (sources, pipelines, destinations)
+│   ├── configure-cribl.sh              # Cribl Cloud REST API fallback (no MCP dependency)
+│   ├── assemble-workloads.sh           # Collect workload outputs → hub/workloads.auto.tfvars.json
+│   └── apply-all.sh                    # Automated Terraform sequencing
 ├── diagrams/                           # Mermaid source files (4 diagrams)
 └── docs/                               # Pipeline docs and incident/operations playbooks
 ```
@@ -231,7 +257,7 @@ This project runs entirely on Databricks Free Edition (permanent, not a trial):
 | Multiple warehouses | Not available |
 | Account-level API | Not available |
 
-The **Starter Warehouse** is the single compute resource. All 11 scheduled jobs (spanning AWS, Azure, and GCP workloads) and all interactive queries share it. To enable classic clusters, add `enable_cluster = true` in the workspace config module (requires a paid plan).
+The **Starter Warehouse** is the single compute resource. All 13 scheduled jobs (spanning AWS, Azure, GCP workloads, and host telemetry) and all interactive queries share it. To enable classic clusters, add `enable_cluster = true` in the workspace config module (requires a paid plan).
 
 ## License
 

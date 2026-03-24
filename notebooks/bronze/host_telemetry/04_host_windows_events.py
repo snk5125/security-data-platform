@@ -160,18 +160,28 @@ def transform_windows_to_ocsf(df, source_type):
     default_class = get_class_uid_for_source(source_type)
     default_category = get_category_uid_for_class(default_class)
 
-    # For security events, apply EventCode-based overrides for account changes.
-    # For other source types, all events get the default class.
+    # Extract EventCode from _raw using regex (Cribl strips parsed fields).
+    # Windows Event Log _raw contains "EventCode=NNNN" in the rendered text.
     acct_change_codes = list(ACCOUNT_CHANGE_EVENT_CODES)
+
+    # Add extracted EventCode column for classification.
+    # regexp_extract returns "" when no match — nullif converts that to null
+    # so cast("int") produces null instead of a cast error.
+    df = df.withColumn("_event_code",
+        F.when(
+            F.regexp_extract(col("_raw"), r"EventCode=(\d+)", 1) != "",
+            F.regexp_extract(col("_raw"), r"EventCode=(\d+)", 1).cast("int")
+        )
+    )
 
     if source_type == "windows_security":
         class_uid_col = (
-            when(col("EventCode").cast("int").isin(acct_change_codes), lit(CLASS_ACCOUNT_CHANGE))
+            when(col("_event_code").isin(acct_change_codes), lit(CLASS_ACCOUNT_CHANGE))
             .otherwise(lit(default_class))
             .cast("int")
         )
         category_uid_col = (
-            when(col("EventCode").cast("int").isin(acct_change_codes), lit(CATEGORY_IAM))
+            when(col("_event_code").isin(acct_change_codes), lit(CATEGORY_IAM))
             .otherwise(lit(default_category))
             .cast("int")
         )
@@ -188,14 +198,14 @@ def transform_windows_to_ocsf(df, source_type):
         category_uid_col.alias("category_uid"),
         lit(SEVERITY_INFORMATIONAL).cast("int").alias("severity_id"),
 
-        # ── Status — detect Audit Success/Failure from Keywords field ──
-        # Windows Security events set Keywords to "Audit Success" or
-        # "Audit Failure". System/Application events may not have this field.
+        # ── Status — detect Audit Success/Failure from _raw text ──
+        # Windows Security events contain "Audit Success" or "Audit Failure"
+        # keywords in the rendered event text.
         when(
-            F.lower(F.coalesce(col("Keywords"), lit(""))).contains("audit success"),
+            F.lower(col("_raw")).contains("audit success"),
             lit(STATUS_SUCCESS)
         ).when(
-            F.lower(F.coalesce(col("Keywords"), lit(""))).contains("audit failure"),
+            F.lower(col("_raw")).contains("audit failure"),
             lit(STATUS_FAILURE)
         ).otherwise(
             lit(STATUS_UNKNOWN)
@@ -203,20 +213,19 @@ def transform_windows_to_ocsf(df, source_type):
 
         lit(ACTIVITY_UNKNOWN).cast("int").alias("activity_id"),
 
-        # ── Message — rendered event message or raw event ──
-        F.coalesce(col("Message"), col("_raw")).alias("message"),
+        # ── Message — the raw event text ──
+        col("_raw").alias("message"),
 
-        # ── Actor — the Windows user account associated with the event ──
-        # Windows events may have User and/or Sid fields from Cribl parsing.
+        # ── Actor — extract account name from _raw if available ──
+        # Windows event _raw may contain "Account Name: <user>" patterns.
         F.struct(
             F.struct(
-                F.coalesce(col("User"), lit(None).cast("string")).alias("name"),
-                F.coalesce(col("Sid"), lit(None).cast("string")).alias("uid"),
+                F.regexp_extract(col("_raw"), r"Account Name:\s+(\S+)", 1).alias("name"),
+                F.regexp_extract(col("_raw"), r"Security ID:\s+(\S+)", 1).alias("uid"),
             ).alias("user"),
         ).alias("actor"),
 
         # ── Device — the Windows host ──
-        # Use ComputerName if available, fall back to host.
         build_device_struct(
             hostname_col="host",
             os_name="Windows Server 2022",
@@ -275,8 +284,9 @@ for source_type in WINDOWS_SOURCE_TYPES:
 
             print(f"  {source_type}/{label} done.")
         except Exception as e:
-            if "CF_EMPTY_DIR" in str(e) or "empty" in str(e).lower():
-                print(f"  {source_type}/{label} skipped — no files found yet.")
+            err = str(e)
+            if "CF_EMPTY_DIR" in err or "empty" in err.lower() or "FileNotFoundException" in err or "No such file or directory" in err:
+                print(f"  {source_type}/{label} skipped — no data available yet.")
             else:
                 raise
 
