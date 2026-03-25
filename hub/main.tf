@@ -100,4 +100,8 @@ module "jobs" {
 
   # Host telemetry notebooks — path relative to hub/ root.
   host_telemetry_notebook_source_path = "${path.root}/../notebooks/bronze/host_telemetry"
+
+  # Silver host telemetry notebooks — path relative to hub/ root.
+  silver_host_telemetry_notebook_source_path    = "${path.root}/../notebooks/silver/host_telemetry"
+  silver_host_telemetry_notebook_workspace_path = "/Shared/security-lakehouse/silver/host_telemetry"
 }

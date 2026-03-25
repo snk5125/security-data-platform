@@ -9,5 +9,5 @@
   "tailOnly": false,
   "interval": 10,
   "connections": [{"output": "stream-tcp", "pipeline": "auth_enrichment"}],
-  "description": "Monitor auth logs (auth.log on Debian/Ubuntu, secure on RHEL/Amazon Linux)"
+  "description": "Monitor auth logs (auth.log on Debian/Ubuntu, secure on RHEL/Amazon Linux). Includes both /var/log/secure and /var/log/*/secure globs."
 }

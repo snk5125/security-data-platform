@@ -102,6 +102,13 @@ def transform_auditd_to_ocsf(df):
     """
     Transform raw auditd JSON events into OCSF v1.1.0 API Activity format.
     """
+    # Build extra_labels conditionally — audit_type only exists in data from
+    # Cribl Edge agents running the updated auditd_enrichment pipeline.
+    # Historical data (before the pipeline enhancement) won't have this column.
+    extra_labels = {}
+    if "audit_type" in df.columns:
+        extra_labels["audit_type"] = F.coalesce(F.col("audit_type"), F.lit("unknown"))
+
     return df.select(
         # ── Time — Cribl _time is epoch seconds ──
         F.from_unixtime(col("_time")).cast("timestamp").alias("time"),
@@ -146,7 +153,9 @@ def transform_auditd_to_ocsf(df):
         build_device_struct("host").alias("device"),
 
         # ── Metadata — product info ──
-        build_ocsf_metadata(SOURCE_TYPE).alias("metadata"),
+        # extra_labels includes audit_type if the column exists in the raw data
+        # (from updated Cribl Edge pipeline). Empty dict for historical data.
+        build_ocsf_metadata(SOURCE_TYPE, extra_labels=extra_labels or None).alias("metadata"),
 
         # ── Source URL — the storage path for provenance tracking ──
         col("_metadata.file_path").alias("src_url"),

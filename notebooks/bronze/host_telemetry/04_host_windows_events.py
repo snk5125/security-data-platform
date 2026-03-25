@@ -160,6 +160,12 @@ def transform_windows_to_ocsf(df, source_type):
     default_class = get_class_uid_for_source(source_type)
     default_category = get_category_uid_for_class(default_class)
 
+    # Build extra_labels conditionally — win_event_type only exists in data from
+    # Cribl Edge agents running the updated wineventlogs pipeline.
+    extra_labels = {}
+    if "win_event_type" in df.columns:
+        extra_labels["win_event_type"] = F.coalesce(F.col("win_event_type"), F.lit("unknown"))
+
     # Extract EventCode from _raw using regex (Cribl strips parsed fields).
     # Windows Event Log _raw contains "EventCode=NNNN" in the rendered text.
     acct_change_codes = list(ACCOUNT_CHANGE_EVENT_CODES)
@@ -233,7 +239,9 @@ def transform_windows_to_ocsf(df, source_type):
         ).alias("device"),
 
         # ── Metadata — product info with source type label ──
-        build_ocsf_metadata(source_type).alias("metadata"),
+        # extra_labels includes win_event_type if the column exists in the raw data
+        # (from updated Cribl Edge pipeline). Empty dict for historical data.
+        build_ocsf_metadata(source_type, extra_labels=extra_labels or None).alias("metadata"),
 
         # ── Source URL — the storage path for provenance tracking ──
         col("_metadata.file_path").alias("src_url"),

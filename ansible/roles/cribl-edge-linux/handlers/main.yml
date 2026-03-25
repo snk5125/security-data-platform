@@ -7,3 +7,8 @@
     name: "{{ service_name }}"
     state: restarted
     daemon_reload: true
+
+- name: restart auditd
+  ansible.builtin.command:
+    cmd: service auditd restart
+  # auditd doesn't support systemctl restart — must use service command

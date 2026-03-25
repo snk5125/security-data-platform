@@ -121,6 +121,18 @@ variable "host_telemetry_notebook_workspace_path" {
   default     = "/Shared/security-lakehouse/bronze/host_telemetry"
 }
 
+variable "silver_host_telemetry_notebook_source_path" {
+  description = "Local path to silver host telemetry notebook directory. Empty string disables silver host telemetry job creation."
+  type        = string
+  default     = ""
+}
+
+variable "silver_host_telemetry_notebook_workspace_path" {
+  description = "Databricks workspace path for silver host telemetry notebooks"
+  type        = string
+  default     = "/Shared/security-lakehouse/silver/host_telemetry"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SNS Alert Forwarding
 # These variables are passed from the sns-alerts AWS module outputs via the

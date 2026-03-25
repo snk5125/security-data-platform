@@ -209,11 +209,11 @@ apply_source() {
   payload="$(cat "${config_file}")"
 
   local result
-  if result="$(cribl_api PATCH "/api/v1/m/${group}/lib/sources/${source_type}/${source_id}" "${payload}" 2>&1)"; then
+  if result="$(cribl_api PATCH "/api/v1/m/${group}/system/inputs/${source_id}" "${payload}" 2>&1)"; then
     echo "   Updated source '${source_id}'."
   else
     echo "   PATCH failed, attempting POST to create..."
-    if result="$(cribl_api POST "/api/v1/m/${group}/lib/sources/${source_type}" "${payload}" 2>&1)"; then
+    if result="$(cribl_api POST "/api/v1/m/${group}/system/inputs" "${payload}" 2>&1)"; then
       echo "   Created source '${source_id}'."
     else
       echo "   ERROR: Failed to apply source '${source_id}'." >&2
@@ -240,11 +240,11 @@ apply_destination() {
   payload="$(envsubst_json "${config_file}")"
 
   local result
-  if result="$(cribl_api PATCH "/api/v1/m/${group}/lib/destinations/${dest_type}/${dest_id}" "${payload}" 2>&1)"; then
+  if result="$(cribl_api PATCH "/api/v1/m/${group}/system/outputs/${dest_id}" "${payload}" 2>&1)"; then
     echo "   Updated destination '${dest_id}'."
   else
     echo "   PATCH failed, attempting POST to create..."
-    if result="$(cribl_api POST "/api/v1/m/${group}/lib/destinations/${dest_type}" "${payload}" 2>&1)"; then
+    if result="$(cribl_api POST "/api/v1/m/${group}/system/outputs" "${payload}" 2>&1)"; then
       echo "   Created destination '${dest_id}'."
     else
       echo "   ERROR: Failed to apply destination '${dest_id}'." >&2
@@ -317,11 +317,11 @@ apply_stream() {
   route_id="$(echo "${route_payload}" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")"
 
   local result
-  if result="$(cribl_api PATCH "/api/v1/m/${stream_group}/lib/routes/${route_id}" "${route_payload}" 2>&1)"; then
+  if result="$(cribl_api PATCH "/api/v1/m/${stream_group}/system/routes/${route_id}" "${route_payload}" 2>&1)"; then
     echo "   Updated route '${route_id}'."
   else
     echo "   PATCH failed, attempting POST to create..."
-    if result="$(cribl_api POST "/api/v1/m/${stream_group}/lib/routes" "${route_payload}" 2>&1)"; then
+    if result="$(cribl_api POST "/api/v1/m/${stream_group}/system/routes" "${route_payload}" 2>&1)"; then
       echo "   Created route '${route_id}'."
     else
       echo "   ERROR: Failed to apply route '${route_id}'." >&2

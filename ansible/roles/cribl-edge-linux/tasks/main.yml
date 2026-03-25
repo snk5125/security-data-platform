@@ -80,3 +80,55 @@
     state: started
     enabled: true
     daemon_reload: true
+
+# ---------------------------------------------------------------------------
+# Auditd EXECVE rules.
+# Amazon Linux 2023 ships with "-a never,task" which disables all syscall
+# auditing.  We replace the rules with a targeted set that captures command
+# execution (execve) for all users, giving Cribl Edge full process visibility
+# via the existing ausearch source.
+# ---------------------------------------------------------------------------
+
+- name: Deploy auditd rules for command execution tracking
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/50-execve.rules
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      # Track all process executions (execve syscall) for security monitoring.
+      # Key "cmd" tags these events for easy filtering in ausearch/auditd pipeline.
+      -a always,exit -F arch=b64 -S execve -k cmd
+      -a always,exit -F arch=b32 -S execve -k cmd
+  notify: restart auditd
+
+- name: Remove default never/task rules that disable syscall auditing
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/audit.rules
+    regexp: '^-a (never,task|task,never)'
+    state: absent
+  notify: restart auditd
+
+# ---------------------------------------------------------------------------
+# Bash history persistence.
+# Amazon Linux 2023 does not set HISTFILE by default in non-login shells,
+# and interactive sessions only flush on clean exit.  Drop a profile script
+# that ensures every user gets immediate, per-command history writes so
+# Cribl Edge can tail the file in near-real-time.
+# ---------------------------------------------------------------------------
+
+- name: Configure immediate bash history persistence for all users
+  ansible.builtin.copy:
+    dest: /etc/profile.d/bash_history_persist.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Written by Ansible — ensures .bash_history exists and flushes
+      # after every command so Cribl Edge can tail the file.
+      export HISTFILE="$HOME/.bash_history"
+      export HISTSIZE=10000
+      export HISTFILESIZE=20000
+      export HISTTIMEFORMAT="%F %T "
+      shopt -s histappend
+      PROMPT_COMMAND="history -a;${PROMPT_COMMAND}"

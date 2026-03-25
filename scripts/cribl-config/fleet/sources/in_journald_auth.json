@@ -1,0 +1,10 @@
+{
+  "id": "in_journald_auth",
+  "type": "exec",
+  "disabled": false,
+  "sendToRoutes": false,
+  "command": "journalctl -u sshd -u sudo -u systemd-logind --no-pager --since '5 minutes ago' -o short-iso",
+  "interval": 300,
+  "connections": [{"output": "stream-tcp", "pipeline": "auth_enrichment"}],
+  "description": "Fallback auth source for systems using journald (Amazon Linux 2023). Reads sshd, sudo, and systemd-logind events every 5 minutes."
+}

@@ -161,7 +161,7 @@ HOST_OCSF_SCHEMA = StructType([
 # STRUCT BUILDERS — create OCSF nested objects as Spark struct columns
 # =============================================================================
 
-def build_ocsf_metadata(source_type, obfuscated=False):
+def build_ocsf_metadata(source_type, obfuscated=False, extra_labels=None):
     """
     Build the OCSF metadata struct for host telemetry data sources.
 
@@ -171,17 +171,24 @@ def build_ocsf_metadata(source_type, obfuscated=False):
         obfuscated: If True, adds an "obfuscated" label to indicate the raw
                     event data has been sanitized (e.g., bash_history commands
                     may have sensitive arguments masked by Cribl).
+        extra_labels: Optional dict of {label_name: column_expression} to add
+                      to the labels map. Values must be Spark Column expressions
+                      (not strings). Example:
+                          extra_labels={"audit_type": F.col("audit_type")}
 
     Returns a Spark struct column with product, version, and labels fields.
     """
-    labels = {"source_type": source_type}
+    # Build static labels as key-value pairs for create_map
+    static_pairs = [F.lit("source_type"), F.lit(source_type)]
     if obfuscated:
-        labels["obfuscated"] = "true"
+        static_pairs.extend([F.lit("obfuscated"), F.lit("true")])
 
-    # Build the labels map as a Spark literal
-    labels_col = F.create_map(
-        *[item for k, v in labels.items() for item in (F.lit(k), F.lit(v))]
-    )
+    if extra_labels:
+        # Extra labels are column expressions — cast to string for map compatibility
+        for k, v in extra_labels.items():
+            static_pairs.extend([F.lit(k), F.coalesce(v.cast("string"), F.lit("unknown"))])
+
+    labels_col = F.create_map(*static_pairs)
 
     return F.struct(
         F.struct(

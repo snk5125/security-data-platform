@@ -1282,3 +1282,286 @@ resource "databricks_job" "host_telemetry_windows" {
     phase    = "1b"
   }
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Silver Host Telemetry — Phase 2 normalization
+# Reads bronze host telemetry Delta tables and writes normalized OCSF events
+# into silver-tier tables. Runs 5 minutes after the bronze jobs to ensure
+# fresh bronze data is available before normalization begins.
+#
+# Prerequisites:
+#   - bronze-host-telemetry-linux and bronze-host-telemetry-windows jobs must
+#     have run at least once (tables exist in bronze schema)
+#   - silver host telemetry notebooks present at source path
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_directory" "silver_host_telemetry" {
+  count = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  path  = var.silver_host_telemetry_notebook_workspace_path
+}
+
+# Shared silver host telemetry helper notebook — defines OCSF struct builders,
+# field-mapping constants, and utility functions used by all silver host
+# telemetry notebooks via %run ./00_silver_host_common. Must be uploaded before
+# any silver host telemetry job that depends on it.
+resource "databricks_notebook" "silver_host_common" {
+  count      = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.silver_host_telemetry]
+  path       = "${var.silver_host_telemetry_notebook_workspace_path}/00_silver_host_common"
+  language   = "PYTHON"
+  source     = "${var.silver_host_telemetry_notebook_source_path}/00_silver_host_common.py"
+}
+
+resource "databricks_notebook" "silver_host_auth" {
+  count      = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.silver_host_telemetry]
+  path       = "${var.silver_host_telemetry_notebook_workspace_path}/01_silver_host_auth"
+  language   = "PYTHON"
+  source     = "${var.silver_host_telemetry_notebook_source_path}/01_silver_host_auth.py"
+}
+
+resource "databricks_notebook" "silver_host_processes" {
+  count      = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.silver_host_telemetry]
+  path       = "${var.silver_host_telemetry_notebook_workspace_path}/02_silver_host_processes"
+  language   = "PYTHON"
+  source     = "${var.silver_host_telemetry_notebook_source_path}/02_silver_host_processes.py"
+}
+
+resource "databricks_notebook" "silver_host_accounts" {
+  count      = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.silver_host_telemetry]
+  path       = "${var.silver_host_telemetry_notebook_workspace_path}/03_silver_host_accounts"
+  language   = "PYTHON"
+  source     = "${var.silver_host_telemetry_notebook_source_path}/03_silver_host_accounts.py"
+}
+
+resource "databricks_notebook" "silver_host_system" {
+  count      = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [databricks_directory.silver_host_telemetry]
+  path       = "${var.silver_host_telemetry_notebook_workspace_path}/04_silver_host_system"
+  language   = "PYTHON"
+  source     = "${var.silver_host_telemetry_notebook_source_path}/04_silver_host_system.py"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Silver Host Telemetry Jobs — 4 independent single-task jobs
+# Each job normalizes one bronze host telemetry data stream into a silver OCSF
+# table. Jobs are independent (no inter-job dependencies) because each source
+# table is written by a different bronze task.
+#
+# Schedule offset: "0 5/15 * * * ?" fires at :05, :20, :35, :50 past the hour
+# — 5 minutes after the bronze jobs at :00/:15/:30/:45 — so fresh bronze data
+# is reliably present before normalization runs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resource "databricks_job" "silver_host_auth" {
+  count = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [
+    databricks_notebook.silver_host_common,
+  ]
+  name = "silver-host-auth"
+
+  # Normalizes bronze.host_auth → silver.host_auth (OCSF Authentication 3002).
+  task {
+    task_key = "normalize"
+
+    notebook_task {
+      notebook_path = databricks_notebook.silver_host_auth[0].path
+      base_parameters = {
+        catalog_name    = var.catalog_name
+        checkpoint_base = "s3://${var.managed_storage_bucket_name}/checkpoints"
+      }
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  # 5-minute offset from bronze cadence — ensures bronze data is written before
+  # silver normalization starts.
+  schedule {
+    quartz_cron_expression = "0 5/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    pipeline = "host_telemetry"
+    phase    = "2-silver"
+  }
+}
+
+resource "databricks_job" "silver_host_processes" {
+  count = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [
+    databricks_notebook.silver_host_common,
+  ]
+  name = "silver-host-processes"
+
+  # Normalizes bronze.host_commands and bronze.host_auditd → silver.host_processes
+  # (OCSF Process Activity 1007).
+  task {
+    task_key = "normalize"
+
+    notebook_task {
+      notebook_path = databricks_notebook.silver_host_processes[0].path
+      base_parameters = {
+        catalog_name    = var.catalog_name
+        checkpoint_base = "s3://${var.managed_storage_bucket_name}/checkpoints"
+      }
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 5/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    pipeline = "host_telemetry"
+    phase    = "2-silver"
+  }
+}
+
+resource "databricks_job" "silver_host_accounts" {
+  count = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [
+    databricks_notebook.silver_host_common,
+  ]
+  name = "silver-host-accounts"
+
+  # Normalizes bronze Windows Event Log account-change events →
+  # silver.host_accounts (OCSF Account Change 3001).
+  task {
+    task_key = "normalize"
+
+    notebook_task {
+      notebook_path = databricks_notebook.silver_host_accounts[0].path
+      base_parameters = {
+        catalog_name    = var.catalog_name
+        checkpoint_base = "s3://${var.managed_storage_bucket_name}/checkpoints"
+      }
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 5/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    pipeline = "host_telemetry"
+    phase    = "2-silver"
+  }
+}
+
+resource "databricks_job" "silver_host_system" {
+  count = var.silver_host_telemetry_notebook_source_path != "" ? 1 : 0
+  depends_on = [
+    databricks_notebook.silver_host_common,
+  ]
+  name = "silver-host-system"
+
+  # Normalizes bronze.host_syslog → silver.host_system (OCSF System Activity 1001).
+  task {
+    task_key = "normalize"
+
+    notebook_task {
+      notebook_path = databricks_notebook.silver_host_system[0].path
+      base_parameters = {
+        catalog_name    = var.catalog_name
+        checkpoint_base = "s3://${var.managed_storage_bucket_name}/checkpoints"
+      }
+    }
+
+    environment_key = "Default"
+  }
+
+  environment {
+    environment_key = "Default"
+
+    spec {
+      client = "1"
+    }
+  }
+
+  schedule {
+    quartz_cron_expression = "0 5/15 * * * ?"
+    timezone_id            = "UTC"
+    pause_status           = "PAUSED"
+  }
+
+  tags = {
+    pipeline = "host_telemetry"
+    phase    = "2-silver"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gold — User Activity Timeline notebooks (on-demand, no scheduled jobs)
+# These three notebooks are uploaded to the existing gold workspace directory
+# for ad-hoc and investigation use. They are not attached to scheduled jobs
+# because they are query-driven (investigator-triggered) rather than batch
+# pipeline stages.
+#
+# Prerequisites: databricks_directory.gold must exist (created above).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shared helper notebook — defines common timeline assembly functions, struct
+# schemas, and display utilities used by timeline_materialize and
+# investigation_graph via %run ./00_timeline_common.
+resource "databricks_notebook" "timeline_common" {
+  depends_on = [databricks_directory.gold]
+  path       = "${var.gold_workspace_notebook_path}/00_timeline_common"
+  language   = "PYTHON"
+  source     = "${var.gold_notebook_source_dir}/00_timeline_common.py"
+}
+
+# Timeline materialization notebook — reads silver host telemetry tables and
+# assembles a chronological per-user activity timeline in gold.user_timeline.
+# Intended for investigator-triggered runs, not scheduled batch processing.
+resource "databricks_notebook" "timeline_materialize" {
+  depends_on = [databricks_directory.gold]
+  path       = "${var.gold_workspace_notebook_path}/04_gold_timeline_materialize"
+  language   = "PYTHON"
+  source     = "${var.gold_notebook_source_dir}/04_gold_timeline_materialize.py"
+}
+
+# Investigation graph notebook — builds a lateral movement / entity relationship
+# graph from gold.user_timeline and exports it for visualization. On-demand only.
+resource "databricks_notebook" "investigation_graph" {
+  depends_on = [databricks_directory.gold]
+  path       = "${var.gold_workspace_notebook_path}/05_investigation_graph"
+  language   = "PYTHON"
+  source     = "${var.gold_notebook_source_dir}/05_investigation_graph.py"
+}

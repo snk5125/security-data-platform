@@ -105,7 +105,7 @@ resource "databricks_grants" "bronze" {
 
   grant {
     principal  = "account users"
-    privileges = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_FUNCTION"]
+    privileges = ["USE_SCHEMA", "SELECT", "CREATE_TABLE", "CREATE_FUNCTION"]
   }
 }
 
@@ -114,7 +114,7 @@ resource "databricks_grants" "silver" {
 
   grant {
     principal  = "account users"
-    privileges = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_FUNCTION"]
+    privileges = ["USE_SCHEMA", "SELECT", "CREATE_TABLE", "CREATE_FUNCTION"]
   }
 }
 
@@ -123,7 +123,7 @@ resource "databricks_grants" "gold" {
 
   grant {
     principal  = "account users"
-    privileges = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_FUNCTION"]
+    privileges = ["USE_SCHEMA", "SELECT", "CREATE_TABLE", "CREATE_FUNCTION"]
   }
 }
 

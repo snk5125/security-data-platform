@@ -30,6 +30,17 @@
         "description": "Extract EventCode field"
       },
       {
+        "id": "eval",
+        "filter": "true",
+        "disabled": false,
+        "conf": {
+          "add": [
+            {"name": "win_event_type", "value": "[4624,4625,4634,4647,4648].includes(Number(__eventCode || 0)) ? 'auth' : [4688].includes(Number(__eventCode || 0)) ? 'process' : [4720,4722,4723,4724,4725,4726].includes(Number(__eventCode || 0)) ? 'account' : 'system'"}
+          ]
+        },
+        "description": "Classify Windows event type for silver routing"
+      },
+      {
         "id": "comment",
         "filter": "true",
         "conf": {
@@ -103,7 +114,7 @@
           "fields": ["_raw"]
         },
         "description": "Drop Timestamp"
-      },
+      }
     ]
   }
 }
