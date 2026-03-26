@@ -18,7 +18,7 @@ from datetime import datetime
 import streamlit as st
 from databricks.sdk.core import Config
 
-from backend import get_connection, list_hosts, build_host_timeline, derive_graph, build_ip_hostname_map
+from backend import get_connection, list_hosts, build_host_timeline, derive_graph, build_ip_hostname_map, build_command_index, resolve_host_ips
 
 # ---------------------------------------------------------------------------
 # Page config — must be first Streamlit command
@@ -90,24 +90,6 @@ if submitted:
     st.session_state["inv_start"] = str(start_combined)
     st.session_state["inv_end"] = str(end_combined)
 
-# ---------------------------------------------------------------------------
-# Sidebar — filters (outside form so they update without re-querying)
-# ---------------------------------------------------------------------------
-st.sidebar.markdown("---")
-st.sidebar.subheader("Filters")
-show_auth = st.sidebar.checkbox("Authentication", value=True)
-show_commands = st.sidebar.checkbox("Commands", value=True)
-show_accounts = st.sidebar.checkbox("Account Changes", value=True)
-show_network = st.sidebar.checkbox("Network (mgmt ports)", value=True)
-show_system = st.sidebar.checkbox("System Events", value=False)
-
-active_filters = {
-    "authentication": show_auth,
-    "process_execution": show_commands,
-    "account_change": show_accounts,
-    "network_connection": show_network,
-    "system_event": show_system,
-}
 
 # ---------------------------------------------------------------------------
 # Main area
@@ -150,29 +132,19 @@ col4.metric("Commands", categories.get("process_execution", 0))
 col5.metric("Network", categories.get("network_connection", 0))
 col6.metric("System", categories.get("system_event", 0))
 
-# ---------------------------------------------------------------------------
-# Sidebar — user filter (populated from timeline data)
-# ---------------------------------------------------------------------------
-all_users = sorted(users_seen)
-selected_users = st.sidebar.multiselect("Users", all_users, default=all_users)
-
-# Apply all filters to timeline
-filtered_timeline = [
-    r for r in timeline
-    if active_filters.get(r.get("event_category"), True)
-    and (r.get("user", "") in selected_users or not r.get("user"))
-]
-
-st.caption(f"Showing {len(filtered_timeline)} of {len(timeline)} events for `{inv_host}`")
+st.caption(f"{len(timeline)} events for `{inv_host}`")
 
 # ---------------------------------------------------------------------------
 # Derive graph from filtered timeline
 # ---------------------------------------------------------------------------
 ip_map = build_ip_hostname_map(_get_conn())
-nodes, edges = derive_graph(filtered_timeline, ip_hostname_map=ip_map)
+nodes, edges = derive_graph(timeline, ip_hostname_map=ip_map)
+host_ips = resolve_host_ips(_get_conn(), inv_host)
+commands_index = build_command_index(timeline, conn=_get_conn(), host_ips=host_ips, end_time=inv_end)
 
 nodes_json = json.dumps(nodes)
 edges_json = json.dumps(edges)
+commands_json = json.dumps(commands_index)
 
 # ---------------------------------------------------------------------------
 # Render vis.js graph
@@ -184,33 +156,285 @@ graph_template = """
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <style>
   body { margin: 0; background: #1a1a2e; font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #f8f8f2; }
-  #graph { width: 100%; height: 600px; border: 1px solid #44475a; border-radius: 8px; }
-  #detail { display: none; position: absolute; right: 16px; top: 16px; width: 300px; background: #282a36; border: 1px solid #44475a; border-radius: 8px; padding: 16px; font-size: 13px; max-height: 400px; overflow-y: auto; z-index: 10; font-family: monospace; }
+  #controls {
+    display: flex; flex-direction: row; padding: 8px 12px;
+    background: #282a36; border-bottom: 1px solid #44475a;
+    flex-wrap: wrap; font-size: 12px; align-items: center; gap: 6px;
+  }
+  #controls label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+  #controls input[type=checkbox] { accent-color: #bd93f9; }
+  .user-toggle {
+    padding: 2px 8px; border-radius: 10px; border: 1px solid #44475a;
+    cursor: pointer; font-size: 11px; background: #1a1a2e; color: #f8f8f2;
+  }
+  .user-toggle.active { background: #bd93f9; color: #1a1a2e; border-color: #bd93f9; }
+  #graph-container { position: relative; }
+  #graph { width: 100%; height: 560px; }
+  #detail {
+    display: none; position: absolute; right: 16px; top: 16px; width: 300px;
+    background: #282a36; border: 1px solid #44475a; border-radius: 8px;
+    padding: 16px; font-size: 13px; max-height: 400px; overflow-y: auto;
+    z-index: 10; font-family: monospace;
+  }
+  .cmd-panel {
+    position: absolute; background: #282a36; border: 1px solid #bd93f9;
+    border-radius: 6px; font-size: 11px; font-family: monospace;
+    z-index: 5; min-width: 250px; max-width: 400px; display: none;
+  }
+  .cmd-panel-header {
+    padding: 6px 10px; background: #1e1e30; border-radius: 6px 6px 0 0;
+    cursor: pointer; display: flex; justify-content: space-between; color: #8be9fd;
+  }
+  .cmd-panel-body { max-height: 200px; overflow-y: auto; padding: 4px 10px; }
+  .cmd-row {
+    display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid #1a1a2e;
+  }
+  .cmd-time { color: #6272a4; flex: 0 0 65px; font-size: 10px; }
+  .cmd-text { color: #f1fa8c; word-break: break-all; }
+  .cmd-ssh { color: #ff79c6; }
 </style>
 </head>
 <body>
-<div style="position:relative">
+<div id="controls">
+  <span style="color:#6272a4;margin-right:4px">Filters:</span>
+  <label>
+    <input type="checkbox" checked onchange="filterByCategory('authentication', this.checked)"> Auth
+  </label>
+  <label>
+    <input type="checkbox" checked onchange="filterByCategory('process_execution', this.checked)"> Commands
+  </label>
+  <label>
+    <input type="checkbox" checked onchange="filterByCategory('account_change', this.checked)"> Acct Changes
+  </label>
+  <label>
+    <input type="checkbox" checked onchange="filterByCategory('network_connection', this.checked)"> Network
+  </label>
+  <label>
+    <input type="checkbox" onchange="filterByCategory('system_event', this.checked)"> System
+  </label>
+  <span style="color:#44475a;margin:0 4px">|</span>
+  <span style="color:#6272a4">Users:</span>
+  <span id="user-toggles"></span>
+  <span style="color:#44475a;margin:0 4px">|</span>
+  <button onclick="network.fit({animation:true})" style="background:#44475a;color:#f8f8f2;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:11px">Reset View</button>
+</div>
+<div id="graph-container">
   <div id="graph"></div>
   <div id="detail"></div>
 </div>
 <script>
 var allNodes = NODES_JSON;
 var allEdges = EDGES_JSON;
+var commandsIndex = COMMANDS_JSON;
+
+var openPanels = {};   // nodeId -> DOM element
+var categoryState = {
+  authentication: true,
+  process_execution: true,
+  account_change: true,
+  network_connection: true,
+  system_event: false
+};
+var userState = {};    // nodeId -> bool (true = visible)
 
 var nodes = new vis.DataSet(allNodes);
 var edges = new vis.DataSet(allEdges);
-var network = new vis.Network(document.getElementById('graph'), {nodes:nodes, edges:edges}, {
-  layout: { hierarchical: { direction:'LR', sortMethod:'directed', levelSeparation: 180, nodeSpacing: 60 } },
-  physics: { enabled:true, hierarchicalRepulsion:{ nodeDistance: 100 } },
-  interaction: { hover:true, tooltipDelay:200 },
-  edges: { arrows:{ to:{ enabled:true, scaleFactor:0.5 } }, smooth:{ type:'cubicBezier' } }
+var network = new vis.Network(document.getElementById('graph'), {nodes: nodes, edges: edges}, {
+  layout: {
+    hierarchical: {
+      direction: 'LR',
+      sortMethod: 'directed',
+      levelSeparation: 200,
+      nodeSpacing: 80
+    }
+  },
+  physics: { enabled: true, hierarchicalRepulsion: { nodeDistance: 120 } },
+  interaction: { hover: true, tooltipDelay: 200 },
+  edges: { arrows: { to: { enabled: true, scaleFactor: 0.5 } }, smooth: { type: 'cubicBezier' } }
 });
-network.once('stabilized', function() { network.setOptions({physics:false}); });
+network.once('stabilized', function() {
+  // 1. Capture positions computed by hierarchical layout
+  var positions = network.getPositions();
+  // 2. Turn off hierarchical layout AND physics
+  network.setOptions({ layout: { hierarchical: { enabled: false } }, physics: false });
+  // 3. Re-apply positions and pin every node as fixed
+  var updates = [];
+  Object.keys(positions).forEach(function(id) {
+    updates.push({ id: id, x: positions[id].x, y: positions[id].y, fixed: true });
+  });
+  nodes.update(updates);
+});
+
+// Unfix a node when the user starts dragging it, re-fix on release
+network.on('dragStart', function(p) {
+  if (p.nodes.length > 0) {
+    nodes.update({ id: p.nodes[0], fixed: false });
+  }
+});
+network.on('dragEnd', function(p) {
+  if (p.nodes.length > 0) {
+    var pos = network.getPositions([p.nodes[0]]);
+    var nodePos = pos[p.nodes[0]];
+    nodes.update({ id: p.nodes[0], x: nodePos.x, y: nodePos.y, fixed: true });
+  }
+});
+
+// Build user toggle buttons for each user node
+allNodes.forEach(function(node) {
+  if (node.type === 'user') {
+    userState[node.id] = true;
+    var btn = document.createElement('span');
+    btn.className = 'user-toggle active';
+    btn.setAttribute('data-uid', node.id);
+    // Use only the first line of the label as the button text
+    var labelText = (node.label || String(node.id)).split('\\n')[0];
+    btn.textContent = labelText;
+    btn.onclick = (function(uid) {
+      return function() {
+        var nowVisible = !userState[uid];
+        userState[uid] = nowVisible;
+        btn.className = 'user-toggle' + (nowVisible ? ' active' : '');
+        filterByUser(uid, nowVisible);
+      };
+    })(node.id);
+    document.getElementById('user-toggles').appendChild(btn);
+  }
+});
+
+function filterByCategory(cat, visible) {
+  categoryState[cat] = visible;
+  nodes.get().forEach(function(node) {
+    if (node.event_category === cat) {
+      nodes.update({ id: node.id, hidden: !visible });
+    }
+  });
+  edges.get().forEach(function(edge) {
+    if (edge.event_category === cat) {
+      edges.update({ id: edge.id, hidden: !visible });
+    }
+  });
+  // Show/hide command panels for process_execution nodes
+  if (cat === 'process_execution') {
+    Object.keys(openPanels).forEach(function(nodeId) {
+      var panel = openPanels[nodeId];
+      if (panel) {
+        panel.style.display = visible ? 'block' : 'none';
+      }
+    });
+  }
+}
+
+function filterByUser(uid, visible) {
+  nodes.update({ id: uid, hidden: !visible });
+  edges.get().forEach(function(edge) {
+    if (edge.from === uid || edge.to === uid) {
+      if (edge.event_category === 'structural') {
+        edges.update({ id: edge.id, hidden: !visible });
+      } else {
+        // Only show if both user visible AND category filter allows it
+        var catAllowed = categoryState[edge.event_category] !== false;
+        edges.update({ id: edge.id, hidden: !(visible && catAllowed) });
+      }
+    }
+  });
+  if (openPanels[uid]) {
+    openPanels[uid].style.display = visible ? 'block' : 'none';
+  }
+}
+
+function positionPanel(nodeId) {
+  var panel = openPanels[nodeId];
+  if (!panel) { return; }
+  try {
+    var pos = network.getPosition(nodeId);
+    var dom = network.canvasToDOM(pos);
+    panel.style.left = (dom.x + 20) + 'px';
+    panel.style.top  = (dom.y + 20) + 'px';
+  } catch(e) {}
+}
+
+function repositionAllPanels() {
+  Object.keys(openPanels).forEach(function(nodeId) {
+    positionPanel(nodeId);
+  });
+}
+
+function toggleCmdPanel(nodeId) {
+  // If panel already exists, toggle visibility
+  if (openPanels[nodeId]) {
+    var existing = openPanels[nodeId];
+    existing.style.display = (existing.style.display === 'none') ? 'block' : 'none';
+    return;
+  }
+  var data = commandsIndex[nodeId];
+  if (!data || !data.commands || data.commands.length === 0) { return; }
+
+  var panel = document.createElement('div');
+  panel.className = 'cmd-panel';
+
+  // Header
+  var header = document.createElement('div');
+  header.className = 'cmd-panel-header';
+
+  var leftSpan = document.createElement('span');
+  leftSpan.textContent = '\u25bc ' + data.label + ' (' + data.commands.length + ' cmds)';
+
+  var rightSpan = document.createElement('span');
+  rightSpan.style.color = '#6272a4';
+  rightSpan.textContent = 'click to close';
+
+  header.appendChild(leftSpan);
+  header.appendChild(rightSpan);
+  header.onclick = function() { panel.style.display = 'none'; };
+
+  // Body
+  var body = document.createElement('div');
+  body.className = 'cmd-panel-body';
+
+  data.commands.forEach(function(cmd) {
+    var row = document.createElement('div');
+    row.className = 'cmd-row';
+
+    var timeSpan = document.createElement('span');
+    timeSpan.className = 'cmd-time';
+    // Extract HH:MM:SS portion from ISO timestamp string
+    var timeStr = (cmd.time || '');
+    timeSpan.textContent = timeStr.length >= 19 ? timeStr.substring(11, 19) : timeStr;
+
+    var cmdSpan = document.createElement('span');
+    cmdSpan.className = 'cmd-text' + (cmd.is_ssh ? ' cmd-ssh' : '');
+    cmdSpan.textContent = cmd.command_line || '';
+
+    row.appendChild(timeSpan);
+    row.appendChild(cmdSpan);
+    body.appendChild(row);
+  });
+
+  panel.appendChild(header);
+  panel.appendChild(body);
+  document.getElementById('graph-container').appendChild(panel);
+
+  openPanels[nodeId] = panel;
+  positionPanel(nodeId);
+  panel.style.display = 'block';
+}
+
+// Reposition panels on zoom/drag/animation events
+network.on('zoom', repositionAllPanels);
+network.on('dragEnd', repositionAllPanels);
+network.on('animationFinished', repositionAllPanels);
 
 network.on('click', function(p) {
   var panel = document.getElementById('detail');
   if (p.nodes.length > 0) {
-    var node = allNodes.find(function(n){ return n.id === p.nodes[0]; });
+    var nodeId = p.nodes[0];
+    var node = allNodes.find(function(n) { return n.id === nodeId; });
+    if (node && (node.type === 'user' || node.type === 'ssh_target')) {
+      // User node: toggle command panel, hide detail
+      toggleCmdPanel(nodeId);
+      panel.style.display = 'none';
+      return;
+    }
     if (node) {
       panel.textContent = '';
       var h3 = document.createElement('h3');
@@ -232,7 +456,7 @@ network.on('click', function(p) {
       panel.style.display = 'block';
     }
   } else if (p.edges.length > 0) {
-    var edge = allEdges.find(function(e){ return e.id === p.edges[0]; });
+    var edge = allEdges.find(function(e) { return e.id === p.edges[0]; });
     if (edge && edge.title) {
       panel.textContent = '';
       var h3 = document.createElement('h3');
@@ -247,8 +471,13 @@ network.on('click', function(p) {
       panel.appendChild(detDiv);
       panel.style.display = 'block';
     }
-  } else { panel.style.display = 'none'; }
+  } else {
+    panel.style.display = 'none';
+  }
 });
+
+// Hide system events by default on init
+filterByCategory('system_event', false);
 </script>
 </body>
 </html>
@@ -256,7 +485,8 @@ network.on('click', function(p) {
 
 graph_html = (graph_template
     .replace("NODES_JSON", nodes_json)
-    .replace("EDGES_JSON", edges_json))
+    .replace("EDGES_JSON", edges_json)
+    .replace("COMMANDS_JSON", commands_json))
 
 html_size = len(graph_html)
 if html_size > 10_000_000:
@@ -270,6 +500,6 @@ st.components.v1.html(graph_html, height=650, scrolling=False)
 with st.expander("All Events", expanded=False):
     display_cols = ["time", "event_category", "action", "user", "detail",
                     "source_ip", "source_host"]
-    display_data = [{k: row.get(k) for k in display_cols} for row in filtered_timeline]
+    display_data = [{k: row.get(k) for k in display_cols} for row in timeline]
     st.caption(f"{len(display_data)} events")
     st.dataframe(display_data, use_container_width=True, height=400)

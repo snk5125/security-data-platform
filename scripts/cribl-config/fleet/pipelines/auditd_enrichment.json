@@ -14,7 +14,7 @@
           "add": [
             {"name": "cribl", "value": "'yes'"},
             {"name": "source_type", "value": "'auditd'"},
-            {"name": "audit_type", "value": "/^type=(EXECVE|SYSCALL)/.test(_raw) ? 'process' : /^type=(USER_AUTH|USER_LOGIN|CRED_ACQ)/.test(_raw) ? 'auth' : /^type=(ADD_USER|DEL_USER|USER_ACCT)/.test(_raw) ? 'account' : 'system'"}
+            {"name": "audit_type", "value": "/type=(EXECVE|SYSCALL)/.test(_raw) ? 'process' : /type=(USER_AUTH|USER_LOGIN|CRED_ACQ)/.test(_raw) ? 'auth' : /type=(ADD_USER|DEL_USER|USER_ACCT)/.test(_raw) ? 'account' : 'system'"}
           ]
         }
       }

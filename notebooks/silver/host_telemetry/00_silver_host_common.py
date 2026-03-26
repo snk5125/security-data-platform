@@ -66,11 +66,11 @@ def get_audit_type(message_col="message"):
         when(col("metadata.labels.audit_type").isNotNull() &
              (col("metadata.labels.audit_type") != "unknown"),
              col("metadata.labels.audit_type"))
-        .when(F.regexp_extract(col(message_col), r"^type=(EXECVE|SYSCALL)", 1) != "",
+        .when(F.regexp_extract(col(message_col), r"type=(EXECVE|SYSCALL)", 1) != "",
               lit("process"))
-        .when(F.regexp_extract(col(message_col), r"^type=(USER_AUTH|USER_LOGIN|CRED_ACQ)", 1) != "",
+        .when(F.regexp_extract(col(message_col), r"type=(USER_AUTH|USER_LOGIN|CRED_ACQ)", 1) != "",
               lit("auth"))
-        .when(F.regexp_extract(col(message_col), r"^type=(ADD_USER|DEL_USER|USER_ACCT)", 1) != "",
+        .when(F.regexp_extract(col(message_col), r"type=(ADD_USER|DEL_USER|USER_ACCT)", 1) != "",
               lit("account"))
         .otherwise(lit("system"))
     )
