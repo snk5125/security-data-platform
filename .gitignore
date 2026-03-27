@@ -41,12 +41,7 @@ crash.*.log
 
 # Superpowers skills (local Claude Code extensions)
 superpowers/
-.superpowers/
 docs/superpowers/
-
-# AI dev-kit metadata and MCP config (local tooling, not project code)
-.ai-dev-kit/
-.mcp.json
 
 # Environment files
 .env

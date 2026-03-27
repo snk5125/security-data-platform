@@ -109,7 +109,12 @@ ec2_base = instances.select(
     get_json_object(col("configuration"), "$.instanceType").alias("instance_type"),
     get_json_object(col("configuration"), "$.imageId").alias("image_id"),
     get_json_object(col("configuration"), "$.keyName").alias("key_name"),
-    get_json_object(col("configuration"), "$.state.name").alias("instance_state"),
+    # AWS Config stores nested objects as escaped JSON strings, so $.state
+    # is a string like '{"code":16,"name":"running"}', not a nested object.
+    # Double get_json_object: first to get the state string, then to parse it.
+    get_json_object(
+        get_json_object(col("configuration"), "$.state"), "$.name"
+    ).alias("instance_state"),
     get_json_object(col("configuration"), "$.launchTime").cast("timestamp").alias("launch_time"),
     get_json_object(col("configuration"), "$.platform").alias("platform"),
     get_json_object(col("configuration"), "$.architecture").alias("architecture"),
