@@ -110,6 +110,40 @@ For detailed diagrams (IAM trust chains, data flow, Terraform dependency graph),
 
 **Detection (Gold)** — Network flows from AWS VPC Flow Logs, Azure VNet Flow Logs, and GCP VPC Flow Logs are joined against threat intel IOCs on destination IP using an incremental watermark. Matches become alerts via MERGE on `alert_id`. A forwarding notebook reads new alerts via Delta Change Data Feed and publishes to SNS — ~10-minute end-to-end latency. OCSF normalization is the key enabler here: the same gold alerts notebook works across all three clouds without any branching logic.
 
+## Security Investigation
+
+The pipeline doesn't just collect and normalize data — it powers interactive investigation tools for security analysis. These tools run as a Streamlit Databricks App with no additional infrastructure required.
+
+### Host Investigation Graph
+
+![Host Investigation Graph](docs/images/investigation-graph.png)
+
+Interactive vis.js network graph for host-centric security triage. Select a host and time window to see a hierarchical graph of users, authentication sources, process executions, network connections, and SSH lateral movement. Click any user node to expand a collapsible command panel showing every command they ran. SSH session correlation follows lateral movement to show what commands were executed on remote hosts during each session. Client-side filtering by event category (auth, commands, network, account changes, system events) and per-user toggles let you focus the graph without reloading. Dark theme (Dracula palette).
+
+Data sources: `silver.host_authentications`, `silver.host_process_executions`, `silver.host_account_changes`, `silver.host_system_events`, `gold.ec2_inventory`.
+
+### EC2 Config Timeline
+
+![EC2 Config Timeline](docs/images/ec2-config-timeline.png)
+
+Vertical timeline of every API call and configuration change for a specific EC2 instance. CloudTrail events are classified by source — IaC (Terraform), Console, CLI, SDK, or AWS Service — with color-coded badges. AWS Config CDC events show configuration changes with INSERT/UPDATE/DELETE pills. Service polling (Describe* calls from AWS Config) is automatically collapsed into summary groups. Filters let you toggle source types, hide read-only operations, and reverse sort order — all client-side.
+
+Data sources: `bronze.cloudtrail`, `silver.config_cdc`, `gold.ec2_inventory`.
+
+### Threat Intel Correlation
+
+Automated matching of network flows against threat intelligence feeds (Feodo Tracker, Emerging Threats, IPsum). The gold layer joins VPC Flow Logs from all three clouds against IOCs on destination IP. Matched alerts are forwarded to SNS within ~10 minutes of the original network event. OCSF normalization enables a single detection notebook to work across AWS, Azure, and GCP without branching logic.
+
+Data sources: `bronze.threat_intel_raw`, `silver.threat_intel_network_iocs`, `bronze.vpc_flow`, `gold.alerts`.
+
+### Investigation Notebooks
+
+Gold-layer Databricks notebooks for on-demand investigation. Timeline materialization builds a scored activity timeline for a host, with relevance scoring (0–100) based on proximity to a trigger event. Identity chain discovery follows privilege escalation paths (sudo, su, runas) to map the full user transition chain.
+
+Data sources: all `silver.host_*` tables → `gold.user_activity_timeline`.
+
+For detailed feature descriptions and data sources, see [Investigation Capabilities](docs/investigation-capabilities.md).
+
 ## Project Structure
 
 ```
@@ -242,6 +276,7 @@ Copy `workloads/_template-gcp/` to `workloads/gcp-workload-<name>/`, fill in `te
 | [onboard_workload_account_usage.md](onboard_workload_account_usage.md) | AWS onboarding automation script usage |
 | [onboard_azure_workload_usage.md](onboard_azure_workload_usage.md) | Azure onboarding automation script usage |
 | [onboard_gcp_workload_usage.md](onboard_gcp_workload_usage.md) | GCP onboarding automation script usage |
+| [docs/investigation-capabilities.md](docs/investigation-capabilities.md) | Investigation tools — Host Graph, EC2 Timeline, Threat Intel, Notebooks |
 
 ## Databricks Free Edition Notes
 
